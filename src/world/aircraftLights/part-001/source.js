@@ -1,0 +1,63 @@
+import * as THREE from '../../three.module.min.js?v=202605050057';
+
+export function createAircraftLightController(group, { phase = 0, remote = false } = {}) {
+  const lights = [];
+  group.traverse(object => {
+    if (!object.userData?.aircraftLight) return;
+    const material = object.material;
+    if (material) {
+      object.userData.baseEmissiveIntensity = material.emissiveIntensity ?? 1;
+      object.userData.baseOpacity = material.opacity ?? 1;
+      material.transparent = true;
+    }
+    lights.push(object);
+  });
+
+  return {
+    update(timeSeconds, nightLightFactor = 0) {
+      updateAircraftLights(lights, timeSeconds, nightLightFactor, phase, remote);
+    }
+  };
+}
+
+export function updateAircraftLights(lights, timeSeconds, nightLightFactor = 0, phase = 0, remote = false) {
+  const beaconPulse = pulse(timeSeconds + phase, 1.0, 0.08);
+  const strobePulse = pulse(timeSeconds + phase * 1.7, 1.58, 0.045);
+  const nightBoost = THREE.MathUtils.lerp(0.86, remote ? 2.8 : 2.15, nightLightFactor);
+
+  for (const light of lights) {
+    const data = light.userData.aircraftLight;
+    let factor = 1;
+    if (data.kind === 'beacon') factor = 0.16 + beaconPulse * nightBoost;
+    if (data.kind === 'strobe') factor = 0.08 + strobePulse * nightBoost;
+    if (data.kind === 'nav') factor = THREE.MathUtils.lerp(0.48, 1.45, nightLightFactor);
+    if (data.kind === 'landing') factor = THREE.MathUtils.lerp(0.18, 1.0, nightLightFactor);
+
+    if (light.isPointLight) {
+      if (remote) {
+        light.visible = false;
+        light.intensity = 0;
+        continue;
+      }
+      light.visible = true;
+      light.intensity = (data.baseIntensity || 0.55) * factor;
+      light.distance = (data.baseDistance || 30) * THREE.MathUtils.lerp(1.0, 1.7, nightLightFactor);
+      continue;
+    }
+
+    if (!light.material) continue;
+    if (light.material.emissiveIntensity !== undefined) {
+      light.material.emissiveIntensity = (light.userData.baseEmissiveIntensity || 1) * factor;
+    }
+    light.material.opacity = THREE.MathUtils.clamp((light.userData.baseOpacity || 1) * (0.22 + factor * 0.68), 0.05, 1);
+    light.material.needsUpdate = true;
+    light.visible = factor > 0.05;
+  }
+}
+
+function pulse(timeSeconds, period, width) {
+  const t = ((timeSeconds % period) + period) % period;
+  const d = Math.min(t, period - t);
+  const x = THREE.MathUtils.clamp(1 - d / Math.max(0.001, width), 0, 1);
+  return x * x * (3 - 2 * x);
+}

@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "name": "Microhard Flight Simulator World",
+  "version": "202605070200",
+  "worldLoaded": true,
+  "multiplayerEnabled": true,
+  "api": {
+    "session": "./api/session",
+    "state": "./api/state",
+    "world": "./api/world",
+    "leave": "./api/leave"
+  },
+  "assets": {
+    "worldConfig": "./assets/world/world.json",
+    "models": "./assets/models/",
+    "textures": "./assets/textures/",
+    "audio": "./assets/audio/"
+  }
+}

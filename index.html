@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Microhard flight simulator</title>
+  <meta name="description" content="Third-person 3D flight simulator with airports, city, forest, aircraft controls, and cockpit instruments.">
+  <link rel="icon" href="./favicon.ico">
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+  <style>
+    html,
+    body,
+    #app {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+      color: #eef7ff;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #app {
+      position: fixed;
+      inset: 0;
+    }
+
+    .ui-root {
+      visibility: hidden;
+    }
+
+    html.game-css-ready .ui-root {
+      visibility: visible;
+    }
+
+    .loading {
+      position: absolute;
+      inset: 0;
+      z-index: 100;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: #08111a;
+      color: #eef7ff;
+    }
+
+    .loading.hidden {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .loading-card {
+      width: min(520px, calc(100vw - 48px));
+      display: grid;
+      gap: 12px;
+      text-align: left;
+    }
+
+    .loading-card strong {
+      font-size: 20px;
+      font-weight: 900;
+    }
+
+    .loading-card span,
+    .loading-card li,
+    .loading-card small {
+      color: #a9b8c8;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+
+    .boot-steps {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .boot-fatal strong {
+      color: #ffb4b4;
+    }
+  </style>
+  <script>
+    (function () {
+      var boot = window.MHFS_BOOT = window.MHFS_BOOT || {};
+      boot.cssReady = false;
+      boot.moduleStarted = false;
+      boot.failed = false;
+      boot.setStep = function (message) {
+        var status = document.getElementById('bootStatus');
+        if (status) status.textContent = message;
+      };
+      boot.fail = function (payload) {
+        if (boot.failed) return;
+        boot.failed = true;
+        var loading = document.getElementById('loading');
+        if (!loading) return;
+        var browser = navigator.userAgent || 'unknown browser';
+        loading.className = 'loading render-fallback boot-fatal';
+        loading.innerHTML = '<div class="loading-card"><strong>' + escapeHtml(payload.title || 'Game failed to start') + '</strong><span>Reason: ' + escapeHtml(payload.reason || 'Unknown startup error') + '</span><small>Browser: ' + escapeHtml(browser) + '</small><small>Open DevTools Console and Network for details.</small></div>';
+      };
+      boot.cssLoaded = function () {
+        boot.cssReady = true;
+        document.documentElement.classList.add('game-css-ready');
+        boot.setStep('Loading renderer...');
+      };
+      boot.cssFailed = function () {
+        boot.fail({
+          title: 'Game failed to start',
+          reason: 'CSS bundle failed to load: ./src/styles/game.css'
+        });
+      };
+      boot.scriptFailed = function () {
+        boot.fail({
+          title: 'Game failed to start',
+          reason: 'JS bootstrap failed to load: ./src/bootstrap.js'
+        });
+      };
+      window.addEventListener('error', function (event) {
+        if (event.target && (event.target.tagName === 'SCRIPT' || event.target.tagName === 'LINK')) return;
+        boot.fail({
+          title: 'Game failed to start',
+          reason: event.message || 'Unhandled startup error'
+        });
+      });
+      window.addEventListener('unhandledrejection', function (event) {
+        boot.fail({
+          title: 'Game failed to start',
+          reason: event.reason && event.reason.message ? event.reason.message : String(event.reason || 'Unhandled startup promise rejection')
+        });
+      });
+      window.setTimeout(function () {
+        if (!boot.cssReady) {
+          boot.cssFailed();
+          return;
+        }
+        if (!boot.moduleStarted) {
+          boot.fail({
+            title: 'Game failed to start',
+            reason: 'JS bootstrap did not execute within 10 seconds'
+          });
+        }
+      }, 10000);
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, function (character) {
+          return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character];
+        });
+      }
+    }());
+  </script>
+  <link id="gameStylesheet" rel="stylesheet" href="./src/styles/game.css?v=202605070100" onload="window.MHFS_BOOT.cssLoaded()" onerror="window.MHFS_BOOT.cssFailed()">
+</head>
+<body>
+  <div id="app" class="app-shell">
+  <div class="loading" id="loading">
+    <div class="loading-card">
+      <strong>Loading Microhard Flight Simulator...</strong>
+      <span id="bootStatus">Loading renderer...</span>
+      <ol class="boot-steps" aria-label="Startup status">
+        <li>Loading renderer...</li>
+        <li>Loading world...</li>
+        <li>Loading aircraft...</li>
+        <li>Loading UI...</li>
+      </ol>
+    </div>
+  </div>
+  <div class="hud ui-root">
+    <div class="top-readout">
+      <div class="tile">
+        <span class="label">速度</span>
+        <div class="value"><span id="speed">0</span><span class="unit">kt</span></div>
+      </div>
+      <div class="tile">
+        <span class="label">高度</span>
+        <div class="value"><span id="altitude">0</span><span class="unit">ft</span></div>
+      </div>
+      <div class="tile">
+        <span class="label">N1</span>
+        <div class="value"><span id="throttle">0</span><span class="unit">%</span></div>
+      </div>
+      <div class="tile">
+        <span class="label">航向</span>
+        <div class="value"><span id="heading">000</span><span class="unit">deg</span></div>
+      </div>
+    </div>
+
+    <div class="mini-compass">
+      <div class="compass-strip" id="compassStrip">
+        <span>270</span><span>300</span><span>330</span><span>N</span><span>030</span><span>060</span><span>090</span>
+      </div>
+    </div>
+
+    <div class="fma-panel" aria-label="Flight mode annunciator">
+      <div><span>THR</span><b id="fmaThrust">MAN THR</b></div>
+      <div><span>VERT</span><b id="fmaVertical">OP CLB</b></div>
+      <div><span>LAT</span><b id="fmaLateral">HDG</b></div>
+    </div>
+
+    <div class="annunciator">
+      <span class="label">飞控状态</span>
+      <div class="mode" id="mode">FWD</div>
+    </div>
+
+    <div class="thrust-panel" id="thrustPanel">
+      <div class="thrust-title"><span>THRUST LEVERS</span><b id="athrStatus">A/THR ARM</b></div>
+      <div class="speed-target"><span>SPD <b id="targetSpeed">250</b></span><span id="speedMode">MANAGED</span><span id="speedTrend">+0</span></div>
+      <div class="thrust-status-grid">
+        <div><span>LEVER</span><b id="leverDetent">CL</b></div>
+        <div><span>MODE</span><b id="thrustModeSmall">MAN THR</b></div>
+        <div class="status-wide"><span>DETENT</span><b id="leverDetentDetail">CL</b></div>
+        <div><span>IAS</span><b id="thrustIas">0 kt</b></div>
+        <div><span>LIMIT</span><b id="thrustLimit">CLB 82%</b></div>
+        <div><span>TARGET N1</span><b id="targetN1Readout">82%</b></div>
+        <div><span>N1</span><b id="avgN1">82%</b></div>
+      </div>
+      <div class="throttle-gates">
+        <div class="detent-scale">
+          <span class="detent-mark toga" data-detent-label="TOGA">TOGA</span>
+          <span class="detent-mark flx" data-detent-label="FLX_MCT">FLX / MCT</span>
+          <span class="detent-mark cl" data-detent-label="CL">CL</span>
+          <span class="detent-mark idle" data-detent-label="IDLE">IDLE</span>
+          <span class="detent-mark rev" data-detent-label="REV_IDLE">REV IDLE</span>
+          <span class="detent-mark max-rev" data-detent-label="MAX_REV">MAX REV</span>
+        </div>
+        <div class="thrust-track" id="thrustTrackLeft" data-side="left">
+          <div class="reverse-zone"></div>
+          <div class="gate-line toga"></div>
+          <div class="gate-line flx"></div>
+          <div class="gate-line cl"></div>
+          <div class="gate-line idle"></div>
+          <div class="gate-line rev"></div>
+          <div class="thrust-lever" id="thrustLeverLeft"><span>L</span></div>
+        </div>
+        <div class="thrust-track" id="thrustTrackRight" data-side="right">
+          <div class="reverse-zone"></div>
+          <div class="gate-line toga"></div>
+          <div class="gate-line flx"></div>
+          <div class="gate-line cl"></div>
+          <div class="gate-line idle"></div>
+          <div class="gate-line rev"></div>
+          <div class="thrust-lever" id="thrustLeverRight"><span>R</span></div>
+        </div>
+      </div>
+      <div class="engine-readouts">
+        <div><span>L</span><b id="leftDetent">CL</b><em id="leftN1">82%</em></div>
+        <div><span>R</span><b id="rightDetent">CL</b><em id="rightN1">82%</em></div>
+      </div>
+      <div class="detent-toast" id="detentToast">CL</div>
+    </div>
+
+    <div class="map-overlay" id="mapOverlay" role="button" tabindex="0" aria-label="Toggle navigation map">
+      <div class="map-head"><span>MAP</span><b id="mapOverlayMode">FULL</b></div>
+      <canvas id="navMapOverlay" width="512" height="512"></canvas>
+    </div>
+
+    <div class="instrument-panel">
+      <div class="stack">
+        <div class="bar-box">
+          <span class="label">N1</span>
+          <div class="bar"><span id="throttleBar"></span></div>
+        </div>
+        <div class="readout-row"><strong>V/S</strong><b id="verticalSpeed">0 ft/min</b></div>
+        <div class="readout-row"><strong>VFE</strong><b id="vfeStatus">NEXT 230</b></div>
+        <div class="readout-row"><strong>VLS</strong><b id="vlsStatus">150 kt</b></div>
+        <div class="readout-row"><strong>Fld</strong><b id="nearestField">North Field</b></div>
+      </div>
+
+      <div class="attitude">
+        <div class="horizon"></div>
+        <div class="pitch-lines"></div>
+        <div class="aircraft-mark"></div>
+        <div class="nose-dot"></div>
+      </div>
+
+      <div class="stack systems-stack">
+        <div class="bar-box">
+          <span class="label">Reverse</span>
+          <div class="bar reverse"><span id="reverseBar"></span></div>
+        </div>
+        <div class="readout-row"><strong>Pitch</strong><b id="pitch">0 deg</b></div>
+        <div class="readout-row"><strong>Flaps</strong><b id="flapStatus">CONF 0</b></div>
+        <div class="readout-row"><strong>Spoil</strong><b id="speedBrakeStatus">SPLR ARM</b></div>
+        <div class="readout-row"><strong>Dist</strong><b id="fieldDistance">0 nm</b></div>
+        <div class="sim-clock" aria-label="24-hour server synchronized simulator time">
+          <span id="simClockSource">SERVER</span>
+          <strong>SIM TIME</strong>
+          <b id="simClock">06:00</b>
+        </div>
+      </div>
+
+      <div class="map-panel" id="mapPanel" role="button" tabindex="0" aria-label="Toggle navigation map">
+        <div class="map-head"><span>MAP</span><b id="mapMode">ALL</b></div>
+        <canvas id="navMap" width="256" height="256"></canvas>
+      </div>
+
+      <div class="controls-panel" id="controlsPanel" role="button" tabindex="0" aria-expanded="false" aria-label="Toggle controls reference">
+        <div class="controls-head"><span>KEYS</span><b id="controlsMode">OPEN</b></div>
+        <div class="controls-body">
+          <div><kbd>Q</kbd><span>左刹车 / 空中偏航</span></div>
+          <div><kbd>W</kbd><span>右刹车 / 空中推杆</span></div>
+          <div><kbd>S</kbd><span>拉杆</span></div>
+          <div><kbd>Shift</kbd><span>训练大输入</span></div>
+          <div><kbd>A/D</kbd><span>左右转向</span></div>
+          <div><kbd>E</kbd><span>轻微偏航</span></div>
+          <div><kbd>T</kbd><span>切换飞控法则</span></div>
+          <div><kbd>Z/C</kbd><span>襟翼收回 / 放出</span></div>
+          <div><kbd>X</kbd><span>空中减速板</span></div>
+          <div><kbd>Y</kbd><span>地面扰流板预位</span></div>
+          <div><kbd>G</kbd><span>起落架收放</span></div>
+          <div><kbd>↑</kbd><span>推力连续前推</span></div>
+          <div><kbd>↓</kbd><span>推力连续后拉</span></div>
+          <div><kbd>1-6</kbd><span>推力卡位</span></div>
+          <div><kbd>B/V</kbd><span>A/THR / 速度</span></div>
+          <div><kbd>Space</kbd><span>停机刹车</span></div>
+          <div><kbd>Map</kbd><span>展开导航图</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <script>
+    window.MICROHARD_CONFIG = {
+      BASE_PATH: "./",
+      API_BASE_URL: "",
+      MULTIPLAYER_ENABLED: true,
+      SESSION_ENDPOINT: "./api/session",
+      STATE_ENDPOINT: "./api/state",
+      WORLD_ENDPOINT: "./api/world",
+      WORLD_CONFIG: "./assets/world/world.json",
+      ASSET_MANIFEST: "./assets/polyhaven/manifest.json"
+    };
+  </script>
+  <script type="module" src="./src/bootstrap.js?v=202605070200" onerror="window.MHFS_BOOT.scriptFailed()"></script>
+</body>
+</html>

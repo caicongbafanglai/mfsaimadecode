@@ -1,0 +1,6 @@
+{
+  "type": "module",
+  "scripts": {
+    "build": "node tools/buildVirtualSources.js && node --check server.js && node --check server/runtime/serverCore.js && node --check src/main.js && node --check src/network/multiplayer.js && node --check src/world/ufoEvents.js && node --check src/ui/hud.js"
+  }
+}

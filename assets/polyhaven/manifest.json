@@ -1,0 +1,90 @@
+{
+  "source": "Poly Haven CC0",
+  "maps": "albedo uses sRGB; normal roughness ao use NoColorSpace",
+  "textures": {
+    "aerial_grass_rock": {
+      "resolution": "1k",
+      "maps": {
+        "albedo": "assets/polyhaven/aerial_grass_rock/aerial_grass_rock_albedo_1k.jpg",
+        "normal": "assets/polyhaven/aerial_grass_rock/aerial_grass_rock_normal_1k.jpg",
+        "roughness": "assets/polyhaven/aerial_grass_rock/aerial_grass_rock_roughness_1k.jpg",
+        "ao": "assets/polyhaven/aerial_grass_rock/aerial_grass_rock_ao_1k.jpg"
+      }
+    },
+    "brown_mud_leaves_01": {
+      "resolution": "1k",
+      "maps": {
+        "albedo": "assets/polyhaven/brown_mud_leaves_01/brown_mud_leaves_01_albedo_1k.jpg",
+        "normal": "assets/polyhaven/brown_mud_leaves_01/brown_mud_leaves_01_normal_1k.jpg",
+        "roughness": "assets/polyhaven/brown_mud_leaves_01/brown_mud_leaves_01_roughness_1k.jpg",
+        "ao": "assets/polyhaven/brown_mud_leaves_01/brown_mud_leaves_01_ao_1k.jpg"
+      }
+    },
+    "rocky_terrain_02": {
+      "resolution": "1k",
+      "maps": {
+        "albedo": "assets/polyhaven/rocky_terrain_02/rocky_terrain_02_albedo_1k.jpg",
+        "normal": "assets/polyhaven/rocky_terrain_02/rocky_terrain_02_normal_1k.jpg",
+        "roughness": "assets/polyhaven/rocky_terrain_02/rocky_terrain_02_roughness_1k.jpg",
+        "ao": "assets/polyhaven/rocky_terrain_02/rocky_terrain_02_ao_1k.jpg"
+      }
+    },
+    "sand_01": {
+      "resolution": "1k",
+      "maps": {
+        "albedo": "assets/polyhaven/sand_01/sand_01_albedo_1k.jpg",
+        "normal": "assets/polyhaven/sand_01/sand_01_normal_1k.jpg",
+        "roughness": "assets/polyhaven/sand_01/sand_01_roughness_1k.jpg",
+        "ao": "assets/polyhaven/sand_01/sand_01_ao_1k.jpg"
+      }
+    },
+    "forest_ground_04": {
+      "resolution": "1k",
+      "maps": {
+        "albedo": "assets/polyhaven/forest_ground_04/forest_ground_04_albedo_1k.jpg",
+        "normal": "assets/polyhaven/forest_ground_04/forest_ground_04_normal_1k.jpg",
+        "roughness": "assets/polyhaven/forest_ground_04/forest_ground_04_roughness_1k.jpg",
+        "ao": "assets/polyhaven/forest_ground_04/forest_ground_04_ao_1k.jpg"
+      }
+    },
+    "red_brick_03": {
+      "resolution": "2k",
+      "maps": {
+        "albedo": "assets/polyhaven/red_brick_03/red_brick_03_albedo_2k.jpg",
+        "normal": "assets/polyhaven/red_brick_03/red_brick_03_normal_2k.jpg",
+        "roughness": "assets/polyhaven/red_brick_03/red_brick_03_roughness_2k.jpg",
+        "ao": "assets/polyhaven/red_brick_03/red_brick_03_ao_2k.jpg"
+      }
+    },
+    "weathered_planks": {
+      "resolution": "2k",
+      "maps": {
+        "albedo": "assets/polyhaven/weathered_planks/weathered_planks_albedo_2k.jpg",
+        "normal": "assets/polyhaven/weathered_planks/weathered_planks_normal_2k.jpg",
+        "roughness": "assets/polyhaven/weathered_planks/weathered_planks_roughness_2k.jpg",
+        "ao": "assets/polyhaven/weathered_planks/weathered_planks_ao_2k.jpg"
+      }
+    },
+    "roof_tiles_14": {
+      "resolution": "2k",
+      "maps": {
+        "albedo": "assets/polyhaven/roof_tiles_14/roof_tiles_14_albedo_2k.jpg",
+        "normal": "assets/polyhaven/roof_tiles_14/roof_tiles_14_normal_2k.jpg",
+        "roughness": "assets/polyhaven/roof_tiles_14/roof_tiles_14_roughness_2k.jpg",
+        "ao": "assets/polyhaven/roof_tiles_14/roof_tiles_14_ao_2k.jpg"
+      }
+    },
+    "white_plaster_02": {
+      "resolution": "2k",
+      "maps": {
+        "albedo": "assets/polyhaven/white_plaster_02/white_plaster_02_albedo_2k.jpg",
+        "normal": "assets/polyhaven/white_plaster_02/white_plaster_02_normal_2k.jpg",
+        "roughness": "assets/polyhaven/white_plaster_02/white_plaster_02_roughness_2k.jpg",
+        "ao": "assets/polyhaven/white_plaster_02/white_plaster_02_ao_2k.jpg"
+      }
+    }
+  },
+  "hdri": {
+    "kloofendalPartlyCloudy": "assets/polyhaven/kloofendal_48d_partly_cloudy_puresky/kloofendal_48d_partly_cloudy_puresky_2k.hdr"
+  }
+}

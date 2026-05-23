@@ -1,0 +1,151 @@
+    font-size: 9px;
+  }
+
+  .map-panel .map-head {
+    justify-content: center;
+  }
+
+  .map-panel .map-head b {
+    display: none;
+  }
+
+  .map-overlay .map-head {
+    justify-content: space-between;
+  }
+
+  .attitude {
+    width: 92px;
+  }
+
+  .readout-row {
+    grid-template-columns: minmax(30px, 1fr) auto;
+    gap: 4px;
+    padding: 6px 7px;
+  }
+
+  .readout-row strong {
+    font-size: 11px;
+  }
+
+  .readout-row b {
+    font-size: 14px;
+  }
+
+  .sim-clock {
+    padding: 6px 7px;
+  }
+
+  .sim-clock strong,
+  .sim-clock span {
+    font-size: 7px;
+  }
+
+  .sim-clock b {
+    font-size: 13px;
+  }
+}
+
+@media (max-height: 480px) and (orientation: landscape) {
+  .top-readout {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    top: calc(var(--safe-top) + 8px);
+    left: calc(var(--safe-left) + 8px);
+    width: calc(var(--app-width) - var(--safe-left) - var(--safe-right) - 16px);
+    gap: 5px;
+  }
+
+  .tile {
+    min-height: 48px;
+    padding: 7px 8px;
+    border-radius: 6px;
+  }
+
+  .label {
+    margin-bottom: 2px;
+    font-size: 8px;
+  }
+
+  .value {
+    font-size: clamp(14px, 2.3vw, 18px);
+  }
+
+  .unit {
+    font-size: 8px;
+  }
+
+  .fma-panel {
+    top: calc(var(--safe-top) + 62px);
+    width: min(440px, calc(var(--app-width) - var(--safe-left) - var(--safe-right) - 16px));
+  }
+
+  .fma-panel div {
+    padding: 5px 7px;
+  }
+
+  .fma-panel b {
+    font-size: 11px;
+  }
+
+  .thrust-panel {
+    left: calc(var(--safe-left) + 8px);
+    top: calc(var(--safe-top) + 104px);
+    width: min(220px, calc(var(--app-width) - var(--safe-left) - var(--safe-right) - 16px));
+    padding: 7px;
+    overflow: hidden;
+  }
+
+  .thrust-title,
+  .speed-target {
+    gap: 5px;
+    font-size: 9px;
+  }
+
+  .speed-target {
+    margin-top: 5px;
+    padding: 5px 6px;
+  }
+
+  .thrust-status-grid,
+  .throttle-gates,
+  .engine-readouts {
+    display: none;
+  }
+
+  .instrument-panel {
+    left: calc(var(--safe-left) + 8px);
+    right: auto;
+    bottom: calc(var(--safe-bottom) + 8px);
+    width: calc(var(--app-width) - var(--safe-left) - var(--safe-right) - 16px);
+    height: auto;
+    min-height: 132px;
+    grid-template-columns: minmax(0, 1fr) 84px minmax(0, 1fr) 72px;
+    gap: 6px;
+    padding: 8px;
+  }
+
+  .attitude {
+    width: 84px;
+  }
+
+  .map-panel {
+    min-height: 86px;
+  }
+
+  .map-overlay {
+    top: calc(var(--safe-top) + 104px);
+    width: min(190px, calc(var(--app-width) - var(--safe-left) - var(--safe-right) - 16px));
+    height: min(170px, calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 122px));
+  }
+
+  .readout-row {
+    padding: 5px 6px;
+  }
+
+  .readout-row strong {
+    font-size: 10px;
+  }
+
+  .readout-row b {
+    font-size: 13px;
+  }
+}

@@ -1,0 +1,1442 @@
+    );
+    pier.position.set(x, y, z);
+    pier.rotation.y = heading;
+    pier.castShadow = true;
+    pier.receiveShadow = true;
+    scene.add(pier);
+  }
+
+  function createCity() {
+    const rng = mulberry32(23881);
+    CITY_ZONES.forEach((zone, index) => createCityZone(zone, index, rng));
+  }
+
+  function createCityZone(zone, index, rng) {
+    const denseCity = getRenderQuality?.()?.denseScenery === true;
+    const city = new THREE.Group();
+    city.name = `city-detail-${zone.name || index}`;
+    city.position.set(zone.x, 0, zone.z);
+    city.userData.diagnosticType = 'chunk';
+    city.userData.diagnosticCount = 1;
+    city.userData.stableLod = {
+      distanceByQuality: { LOW: 18000, MEDIUM: 24000, HIGH: 31000, ULTRA: 42000 },
+      hysteresis: 0.22
+    };
+    scene.add(city);
+  
+    const span = zone.span || 1800;
+    const roadSpacing = zone.roadSpacing || 150;
+    const blocks = zone.blocks || 6;
+    const roadPositions = [];
+    for (let i = -blocks; i <= blocks; i++) roadPositions.push(i * roadSpacing);
+  
+    const roadMaterial = liftSurfaceMaterial(new THREE.MeshStandardMaterial({ color: 0x2b3033, roughness: 0.86 }), -1, -1);
+    const stripeMaterial = liftSurfaceMaterial(new THREE.MeshStandardMaterial({ color: 0xd8dee3, roughness: 0.58 }), -2, -2);
+    const bridgeMaterials = createCityBridgeMaterials();
+    const cityRoadSegments = [];
+    const trafficRoutes = [];
+  
+    for (const x of roadPositions) createCityRoadSegments(city, true, x, span, roadMaterial, stripeMaterial, bridgeMaterials, cityRoadSegments, trafficRoutes, CITY_ROAD_PRIMARY_WIDTH, 'primary');
+    for (const z of roadPositions) createCityRoadSegments(city, false, z, span, roadMaterial, stripeMaterial, bridgeMaterials, cityRoadSegments, trafficRoutes, CITY_ROAD_PRIMARY_WIDTH, 'primary');
+
+    const secondaryRoadPositions = [];
+    for (let i = 0; i < roadPositions.length - 1; i++) {
+      const midpoint = (roadPositions[i] + roadPositions[i + 1]) / 2;
+      if (denseCity || i % 2 === index % 2) secondaryRoadPositions.push(midpoint);
+    }
+    for (const x of secondaryRoadPositions) {
+      if (!denseCity && Math.abs(x) > span * 0.38) continue;
+      createCityRoadSegments(city, true, x, span * 0.86, roadMaterial, stripeMaterial, bridgeMaterials, cityRoadSegments, trafficRoutes, CITY_ROAD_SECONDARY_WIDTH, 'secondary');
+    }
+    for (const z of secondaryRoadPositions) {
+      if (!denseCity && Math.abs(z) > span * 0.38) continue;
+      createCityRoadSegments(city, false, z, span * 0.86, roadMaterial, stripeMaterial, bridgeMaterials, cityRoadSegments, trafficRoutes, CITY_ROAD_SECONDARY_WIDTH, 'secondary');
+    }
+  
+    const palette = denseCity
+      ? [0x8fa2b2, 0xd4d0c7, 0x768a96, 0xb9c3ca, 0x9e8074, 0xc8b36e, 0xaab7a4, 0xb78a85, 0x7d9690, 0xb1a889]
+      : [0x8fa2b2, 0xb9c3ca, 0x9e8074, 0xaab7a4];
+    const buildingBatches = new Map();
+    const foundationEntries = [];
+    const roofEntries = [];
+    const cityBuildingRects = [];
+    const windowBatches = { warm: [], cool: [], warmGlow: [], coolGlow: [] };
+    let buildingsChecked = 0;
+    let floatingBuildingsFixed = 0;
+    for (let xi = 0; xi < roadPositions.length - 1; xi++) {
+      for (let zi = 0; zi < roadPositions.length - 1; zi++) {
+        const cx = (roadPositions[xi] + roadPositions[xi + 1]) / 2;
+        const cz = (roadPositions[zi] + roadPositions[zi + 1]) / 2;
+        const density = THREE.MathUtils.clamp((zone.density || 0.48) + 0.08, 0.42, 0.88);
+        const lots = rng() > density ? (rng() > 0.5 ? 2 : 1) : rng() > 0.55 ? 4 : 3;
+  
+        for (let lot = 0; lot < lots; lot++) {
+          const x = cx + (rng() - 0.5) * 58;
+          const z = cz + (rng() - 0.5) * 58;
+          const worldX = city.position.x + x;
+          const worldZ = city.position.z + z;
+          const w = 24 + rng() * (index === 0 ? 54 : 40);
+          const d = 24 + rng() * (index === 0 ? 56 : 42);
+          if (
+            isUrbanFootprintWaterBlocked(worldX, worldZ, w, d, 108) ||
+            isUrbanFootprintAirportBlocked(worldX, worldZ, w, d, 96) ||
+            isNearRunwaySafety(worldX, worldZ, 210, 820) ||
+            isInRunwayApproach(worldX, worldZ, 560, 2300) ||
+            isInRunwayApproach(worldX, worldZ, 1050, 8500)
+          ) continue;
+          const h = 18 + Math.pow(rng(), 1.45) * (zone.maxHeight || 150);
+          const placement = terrainPlacementHeight(
+            { x: worldX, z: worldZ, width: w, depth: d, rotation: 0, large: h > 82 || w * d > 3200 },
+            terrainHeight,
+            { slopeTolerance: h > 82 || w * d > 3200 ? 1.0 : 0.5, mode: 'max' }
+          );
+          const y = placement.groundY;
+          buildingsChecked++;
+          if (placement.needsFoundation) floatingBuildingsFixed++;
+          foundationEntries.push({
+            x,
+            y: y - Math.min(9, placement.foundationDepth + 0.65) / 2 + 0.14,
+            z,
+            sx: w * 1.08,
+            sy: Math.min(9, placement.foundationDepth + 0.65),
+            sz: d * 1.08
+          });
+          const color = palette[Math.floor(rng() * palette.length)];
+          if (!buildingBatches.has(color)) buildingBatches.set(color, []);
+          buildingBatches.get(color).push({ x, y: y + h / 2, z, sx: w, sy: h, sz: d });
+          cityBuildingRects.push({ x: worldX, z: worldZ, halfW: w / 2 + 4.5, halfD: d / 2 + 4.5 });
+          registerStructureFootprint(worldX, worldZ, Math.hypot(w, d) * 0.56 + 10);
+          if (h > 24 && rng() > 0.22) addBuildingWindowBands(windowBatches, city, { x, y, z, w, h, d, id: `${zone.name || index}-${xi}-${zi}-${lot}` }, rng);
+  
+          if (h > 82 && rng() > 0.55) {
+            roofEntries.push({ x, y: y + h + 1.8, z, sx: w * 0.46, sy: 3, sz: d * 0.46 });
+          }
+        }
+      }
+    }
+    addInstancedCityFoundations(city, foundationEntries);
+    addInstancedCityBuildings(city, buildingBatches);
+    addInstancedCityRoofs(city, roofEntries);
+    addInstancedCityWindows(city, windowBatches);
+    createCityStreetlights(city, cityRoadSegments, zone, rng, cityBuildingRects);
+    city.userData.groundPlacementSummary = {
+      buildingsChecked,
+      floatingBuildingsFixed,
+      buriedBuildingsFixed: 0,
+      terrainFootprintsSampled: buildingsChecked
+    };
+  
+    createCityTraffic(city, zone, trafficRoutes, rng, denseCity);
+  }
+
+  function createCityRoadSegments(city, vertical, offset, span, roadMaterial, stripeMaterial, bridgeMaterials, roadSegments, trafficRoutes, width, kind) {
+    const half = span / 2 + 120;
+    const sampleStep = 70;
+    let start = null;
+    let lastDry = null;
+    let waterRun = null;
+    let blockedRun = false;
+  
+    for (let p = -half; p <= half + sampleStep; p += sampleStep) {
+      const clamped = Math.min(p, half);
+      const localX = vertical ? offset : clamped;
+      const localZ = vertical ? clamped : offset;
+      const worldX = city.position.x + localX;
+      const worldZ = city.position.z + localZ;
+      const blockReason = p <= half ? cityRoadBlockReason(worldX, worldZ, width) : 'end';
+      const dry = p <= half && blockReason === null;
+  
+      if (dry) {
+        if (waterRun && waterRun.before !== null) {
+          const converted = createCityRoadBridge(
+            city,
+            vertical,
+            offset,
+            waterRun.start,
+            waterRun.end,
+            waterRun.before,
+            clamped,
+            width,
+            kind,
+            bridgeMaterials,
+            roadMaterial,
+            stripeMaterial,
+            trafficRoutes
+          );
+          if (converted === true) {
+            urbanIntegrityReport.riverCrossingReport.riverRoadCrossingsDetected++;
+            urbanIntegrityReport.riverCrossingReport.crossingsConvertedToBridges++;
+          } else if (converted !== 'blocked') {
+            urbanIntegrityReport.riverCrossingReport.riverRoadCrossingsDetected++;
+            urbanIntegrityReport.riverCrossingReport.unresolvedCrossings++;
+          }
+          waterRun = null;
+        }
+        if (start === null) start = clamped;
+        lastDry = clamped;
+        blockedRun = false;
+        continue;
+      }
+
+      if (blockReason !== 'end' && !blockedRun) {
+        urbanIntegrityReport.roadReport.fixedCount++;
+        blockedRun = true;
+      }
+
+      if (blockReason === 'water') {
+        if (!waterRun) waterRun = { start: clamped, end: clamped, before: lastDry };
+        else waterRun.end = clamped;
+      } else if (waterRun) {
+        waterRun = null;
+      }
+  
+      if (start !== null) {
+        const segStart = Math.max(-half, start - sampleStep * 0.42);
+        const segEnd = Math.min(half, lastDry + sampleStep * 0.42);
+        createCityRoadSection(city, vertical, offset, segStart, segEnd, roadMaterial, stripeMaterial, roadSegments, trafficRoutes, width, kind);
+        start = null;
+        lastDry = null;
+      }
+    }
+  }
+
+  function cityRoadBlockReason(worldX, worldZ, width) {
+    if (isUrbanAirportExcluded(worldX, worldZ, Math.max(46, width * 1.2)) || isRunwayEndUrbanRoadZone(worldX, worldZ)) return 'airport';
+    if (isRoadWaterBlocked(worldX, worldZ, Math.max(150, width * 4.2))) return 'water';
+    return null;
+  }
+
+  function createCityBridgeMaterials() {
+    return {
+      deck: new THREE.MeshStandardMaterial({ color: 0x6d7780, roughness: 0.68, metalness: 0.05 }),
+      edge: new THREE.MeshStandardMaterial({ color: 0x4f5a62, roughness: 0.72, metalness: 0.04 }),
+      rail: new THREE.MeshStandardMaterial({ color: 0xc8d1d8, roughness: 0.5, metalness: 0.08 }),
+      pier: new THREE.MeshStandardMaterial({ color: 0x8e979d, roughness: 0.78, metalness: 0.02 }),
+      cable: new THREE.MeshStandardMaterial({ color: 0xced8de, roughness: 0.46, metalness: 0.12 }),
+      water: liftSurfaceMaterial(new THREE.MeshBasicMaterial({ color: 0xb7edf5, transparent: true, opacity: 0.12, depthWrite: false }), -7, -7)
+    };
+  }
+
+  function createCityRoadBridge(city, vertical, offset, waterStart, waterEnd, beforeDry, afterDry, width, kind, materials, roadMaterial, stripeMaterial, trafficRoutes) {
+    if (beforeDry === null || afterDry === null) return false;
+    const gapStart = Math.min(waterStart, waterEnd);
+    const gapEnd = Math.max(waterStart, waterEnd);
+    const gapLength = gapEnd - gapStart;
+    if (gapLength < 42 || gapLength > 920) return false;
+
+    const centerP = (gapStart + gapEnd) / 2;
+    const centerWorld = cityRoadWorldPoint(city, vertical, offset, centerP);
+    if (isVehicleAirportOperationalBlocked(centerWorld.x, centerWorld.z, Math.max(90, width * 2.6))) {
+      urbanIntegrityReport.bridgeReport.bridgesFixedCount++;
+      return 'blocked';
+    }
+
+    const bridgeType = cityBridgeType(kind, width, gapLength, centerWorld.x, centerWorld.z);
+    const deckLength = THREE.MathUtils.clamp(
+      gapLength + width * (bridgeType === 'large' ? 4.8 : bridgeType === 'medium' ? 3.8 : 3.0),
+      width * 4.2,
+      bridgeType === 'large' ? 620 : bridgeType === 'medium' ? 470 : 330
+    );
+    const bridgeWidth = width + (bridgeType === 'large' ? 24 : bridgeType === 'medium' ? 18 : 14);
+    const deckStart = centerP - deckLength / 2;
+    const deckEnd = centerP + deckLength / 2;
+    const groundStartWorld = cityRoadWorldPoint(city, vertical, offset, deckStart - width * 1.35);
+    const groundEndWorld = cityRoadWorldPoint(city, vertical, offset, deckEnd + width * 1.35);
+    const groundStartY = terrainHeight(groundStartWorld.x, groundStartWorld.z);
+    const groundEndY = terrainHeight(groundEndWorld.x, groundEndWorld.z);
+    const bankMax = Math.max(groundStartY, groundEndY);
+    const clearance = bridgeType === 'large' ? 17 : bridgeType === 'medium' ? 13 : 9.5;
+    const maxLift = bridgeType === 'large' ? 19 : bridgeType === 'medium' ? 15 : 11;
+    const deckBaseY = Math.min(
+      Math.max(bankMax + 3.2, RIVER_SURFACE_Y + clearance),
+      bankMax + maxLift
+    );
+    const deckSurfaceWorldY = deckBaseY + CITY_BRIDGE_DECK_SURFACE_Y;
+    const rampLength = THREE.MathUtils.clamp(
+      (deckSurfaceWorldY - Math.min(groundStartY, groundEndY)) * 8.5 + 64,
+      CITY_BRIDGE_MIN_RAMP_LENGTH,
+      bridgeType === 'large' ? 310 : bridgeType === 'medium' ? 240 : 175
+    );
+    const routeStart = deckStart - rampLength - 42;
+    const routeEnd = deckEnd + rampLength + 42;
+    const startWorld = cityRoadWorldPoint(city, vertical, offset, routeStart);
+    const endWorld = cityRoadWorldPoint(city, vertical, offset, routeEnd);
+    if (isVehicleAirportOperationalBlocked(startWorld.x, startWorld.z, 58) || isVehicleAirportOperationalBlocked(endWorld.x, endWorld.z, 58)) {
+      urbanIntegrityReport.bridgeReport.bridgesFixedCount++;
+      return 'blocked';
+    }
+
+    const group = new THREE.Group();
+    group.name = `city-${bridgeType}-river-road-bridge`;
+    group.position.set(centerWorld.x, deckBaseY, centerWorld.z);
+    group.rotation.y = vertical ? 0 : Math.PI / 2;
+    group.userData.bridge = true;
+    group.userData.bridgeType = bridgeType;
+    group.userData.riverRoadBridge = true;
+    group.userData.roadWidth = width;
+    group.userData.deckLength = deckLength;
+    group.userData.rampLength = rampLength;
+    scene.add(group);
+
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(bridgeWidth, 5.6, deckLength), materials.deck);
+    deck.castShadow = true;
+    deck.receiveShadow = true;
+    group.add(deck);
+
+    const surface = new THREE.Mesh(new THREE.BoxGeometry(width + 4, 0.48, deckLength + 18), roadMaterial);
+    surface.position.y = CITY_BRIDGE_DECK_SURFACE_Y;
+    surface.receiveShadow = true;
+    group.add(surface);
+
+    for (const side of [-1, 1]) {
+      const edge = new THREE.Mesh(new THREE.BoxGeometry(3.8, 3.8, deckLength + 20), materials.edge);
+      edge.position.set(side * (bridgeWidth / 2 - 2.2), CITY_BRIDGE_DECK_SURFACE_Y + 0.9, 0);
+      edge.castShadow = true;
+      group.add(edge);
+
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.4, deckLength + 30), materials.rail);
+      rail.position.set(side * (bridgeWidth / 2 - 1.15), CITY_BRIDGE_DECK_SURFACE_Y + CITY_BRIDGE_EDGE_HEIGHT, 0);
+      rail.castShadow = true;
+      group.add(rail);
+    }
+
+    createCityBridgeRamps(group, city, vertical, offset, centerP, routeStart, routeEnd, deckStart, deckEnd, deckBaseY, deckSurfaceWorldY, rampLength, width, bridgeWidth, roadMaterial, stripeMaterial, materials);
+    createCityBridgeStructure(group, bridgeType, bridgeWidth, deckLength, deckBaseY, materials);
+    createCityBridgeLaneStripes(group, deckLength, stripeMaterial);
+    createCityBridgeUnderflow(centerWorld, vertical, deckLength, bridgeWidth, materials.water);
+
+    const rampSlope = Math.max(
+      Math.abs(deckSurfaceWorldY - (terrainHeight(startWorld.x, startWorld.z) + 1.08)),
+      Math.abs(deckSurfaceWorldY - (terrainHeight(endWorld.x, endWorld.z) + 1.08))
+    ) / Math.max(1, rampLength);
+    const report = urbanIntegrityReport.bridgeReport;
+    report.totalBridgesAdded++;
+    if (bridgeType === 'large') report.largeBridgesCount++;
+    else if (bridgeType === 'medium') report.mediumBridgesCount++;
+    else report.smallBridgesCount++;
+    if (rampSlope <= 0.18) report.bridgesWithValidRamps++;
+    else report.bridgesFixedCount++;
+    if (deckSurfaceWorldY < RIVER_SURFACE_Y + 6 || deckSurfaceWorldY > bankMax + 30) report.floatingBridgeCount++;
+
+    trafficRoutes.push({
+      vertical,
+      offset,
+      start: routeStart,
+      end: routeEnd,
+      width,
+      kind,
+      bridge: true,
+      bridgeType,
+      deckStart,
+      deckEnd,
+      deckSurfaceWorldY,
+      startGroundY: terrainHeight(startWorld.x, startWorld.z) + 1.08,
+      endGroundY: terrainHeight(endWorld.x, endWorld.z) + 1.08
+    });
+    return true;
+  }
+
+  function cityBridgeType(kind, width, gapLength, x, z) {
+    const hash = Math.sin(x * 0.0047 + z * 0.0031) * 0.5 + 0.5;
+    if (kind === 'primary' && (gapLength > 230 || hash > 0.72)) return 'large';
+    if (kind === 'primary' || width >= CITY_ROAD_PRIMARY_WIDTH || gapLength > 150 || hash > 0.46) return 'medium';
+    return 'small';
+  }
+
+  function createCityBridgeRamps(group, city, vertical, offset, bridgeCenterP, routeStart, routeEnd, deckStart, deckEnd, deckBaseY, deckSurfaceWorldY, rampLength, width, bridgeWidth, roadMaterial, stripeMaterial, materials) {
+    const roadWidth = width + 4;
+    for (const end of [-1, 1]) {
+      const rampDeckP = end < 0 ? deckStart : deckEnd;
+      const rampGroundP = end < 0 ? routeStart : routeEnd;
+      const rampCenterP = (rampDeckP + rampGroundP) / 2;
+      const centerLocalZ = rampCenterP - bridgeCenterP;
+      const groundWorld = cityRoadWorldPoint(city, vertical, offset, rampGroundP);
+      const groundLocalY = terrainHeight(groundWorld.x, groundWorld.z) + 1.08 - deckBaseY;
+      const deckLocalY = CITY_BRIDGE_DECK_SURFACE_Y;
+      const slope = Math.atan2(deckLocalY - groundLocalY, rampLength);
+
+      const ramp = new THREE.Mesh(new THREE.BoxGeometry(roadWidth, 0.52, rampLength + 42), roadMaterial);
+      ramp.position.set(0, (deckLocalY + groundLocalY) / 2, centerLocalZ);
+      ramp.rotation.x = end * slope;
+      ramp.receiveShadow = true;
+      group.add(ramp);
+
+      const apron = new THREE.Mesh(new THREE.BoxGeometry(roadWidth + 12, 0.32, 58), roadMaterial);
+      apron.position.set(0, groundLocalY, rampGroundP - bridgeCenterP);
+      apron.rotation.x = end * slope * 0.18;
+      apron.receiveShadow = true;
+      group.add(apron);
+
+      for (const side of [-1, 1]) {
+        const curb = new THREE.Mesh(new THREE.BoxGeometry(2.3, 2.2, rampLength + 34), materials.edge);
+        curb.position.set(side * (bridgeWidth / 2 - 2.4), (deckLocalY + groundLocalY) / 2 + 1.1, centerLocalZ);
+        curb.rotation.x = ramp.rotation.x;
+        curb.castShadow = true;
+        group.add(curb);
+      }
+
+      for (let z = end * (Math.abs(deckEnd - deckStart) / 2 + 36); Math.abs(z) < Math.abs(centerLocalZ) + rampLength * 0.38; z += end * 62) {
+        const t = THREE.MathUtils.clamp((Math.abs(z) - Math.abs(deckEnd - deckStart) / 2) / Math.max(1, rampLength), 0, 1);
+        const stripe = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.08, 22), stripeMaterial);
+        stripe.position.set(0, THREE.MathUtils.lerp(deckLocalY + 0.32, groundLocalY + 0.18, t), z);
+        stripe.rotation.x = ramp.rotation.x;
+        group.add(stripe);
+      }
+    }
+  }
+
+  function createCityBridgeStructure(group, bridgeType, bridgeWidth, deckLength, deckBaseY, materials) {
+    const pierHeight = Math.max(7, deckBaseY - WATER_LEVEL + 1.2);
+    const pierSpacing = bridgeType === 'large' ? 92 : bridgeType === 'medium' ? 118 : deckLength + 1;
+    for (let z = -deckLength / 2 + 48; z <= deckLength / 2 - 48; z += pierSpacing) {
+      if (bridgeType === 'small' && Math.abs(z) > 2) continue;
+      for (const x of [-bridgeWidth * 0.31, bridgeWidth * 0.31]) {
+        const pier = new THREE.Mesh(new THREE.CylinderGeometry(3.8, 5.1, pierHeight, 10), materials.pier);
+        pier.position.set(x, WATER_LEVEL - deckBaseY + pierHeight / 2, z);
+        pier.castShadow = true;
+        group.add(pier);
+      }
+    }
+
+    if (bridgeType !== 'small') {
+      for (const z of [-deckLength * 0.26, deckLength * 0.26]) {
+        const beam = new THREE.Mesh(new THREE.BoxGeometry(bridgeWidth + 14, 3.2, 5.2), materials.edge);
+        beam.position.set(0, CITY_BRIDGE_DECK_SURFACE_Y - 2.8, z);
+        beam.castShadow = true;
+        group.add(beam);
+      }
+    }
+
+    if (bridgeType === 'large') {
+      for (const z of [-deckLength * 0.28, deckLength * 0.28]) {
+        for (const x of [-bridgeWidth * 0.38, bridgeWidth * 0.38]) {
+          const tower = new THREE.Mesh(new THREE.BoxGeometry(5.5, 32, 7.2), materials.pier);
+          tower.position.set(x, CITY_BRIDGE_DECK_SURFACE_Y + 16, z);
+          tower.castShadow = true;
+          group.add(tower);
+        }
+        const cross = new THREE.Mesh(new THREE.BoxGeometry(bridgeWidth + 18, 3.2, 4.4), materials.rail);
+        cross.position.set(0, CITY_BRIDGE_DECK_SURFACE_Y + 30, z);
+        cross.castShadow = true;
+        group.add(cross);
+      }
+      for (const side of [-1, 1]) {
+        const chord = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.2, deckLength * 0.74), materials.cable);
+        chord.position.set(side * bridgeWidth * 0.34, CITY_BRIDGE_DECK_SURFACE_Y + 20, 0);
+        chord.rotation.x = side * 0.045;
+        chord.castShadow = true;
+        group.add(chord);
+      }
+    }
+  }
+
+  function createCityBridgeLaneStripes(group, deckLength, stripeMaterial) {
+    for (let z = -deckLength / 2 + 34; z <= deckLength / 2 - 34; z += 62) {
+      const stripe = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.08, 22), stripeMaterial);
+      stripe.position.set(0, CITY_BRIDGE_DECK_SURFACE_Y + 0.34, z);
+      group.add(stripe);
+    }
+  }
+
+  function createCityBridgeUnderflow(centerWorld, vertical, deckLength, bridgeWidth, material) {
+    const flow = new THREE.Mesh(
+      new THREE.BoxGeometry(bridgeWidth * 2.3, 0.08, Math.max(80, deckLength + 42)),
+      material.clone()
+    );
+    flow.name = 'city-bridge-underflow-highlight';
+    flow.position.set(centerWorld.x, RIVER_SURFACE_Y + 0.12, centerWorld.z);
+    flow.rotation.y = vertical ? Math.PI / 2 : 0;
+    flow.renderOrder = 4;
+    scene.add(flow);
+  }
+
+  function cityRoadWorldPoint(city, vertical, offset, p, laneOffset = 0) {
+    const local = cityRouteLocalPoint(vertical, offset, p, laneOffset);
+    return { x: city.position.x + local.x, z: city.position.z + local.z };
+  }
+
+  function cityRouteLocalPoint(vertical, offset, p, laneOffset = 0) {
+    return vertical
+      ? { x: offset + laneOffset, z: p }
+      : { x: p, z: offset + laneOffset };
+  }
+
+  function addInstancedCityBuildings(city, buildingBatches) {
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const dummy = new THREE.Object3D();
+    for (const [color, entries] of buildingBatches) {
+      if (!entries.length) continue;
+      const material = new THREE.MeshStandardMaterial({ color, roughness: 0.58, metalness: 0.03 });
+      const mesh = new THREE.InstancedMesh(geometry, material, entries.length);
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        dummy.position.set(entry.x, entry.y, entry.z);
+        dummy.rotation.set(0, 0, 0);
+        dummy.scale.set(entry.sx, entry.sy, entry.sz);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(i, dummy.matrix);
+      }
+      mesh.name = 'city-building-batch';
+      mesh.castShadow = false;
+      mesh.receiveShadow = true;
+      mesh.userData.diagnosticType = 'building';
+      mesh.userData.diagnosticCount = entries.length;
+      mesh.instanceMatrix.needsUpdate = true;
+      city.add(mesh);
+    }
+  }
+
+  function addInstancedCityFoundations(city, entries) {
+    if (!entries.length) return;
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const mesh = new THREE.InstancedMesh(geometry, foundationMaterial, entries.length);
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      dummy.position.set(entry.x, entry.y, entry.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(entry.sx, entry.sy, entry.sz);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.name = 'city-building-foundation-batch';
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    mesh.renderOrder = 4;
+    mesh.userData.diagnosticType = 'building';
+    mesh.userData.diagnosticCount = 0;
+    mesh.instanceMatrix.needsUpdate = true;
+    city.add(mesh);
+  }
+
+  function addInstancedCityRoofs(city, entries) {
+    if (!entries.length) return;
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const material = new THREE.MeshStandardMaterial({ color: 0x303942, roughness: 0.7 });
+    const mesh = new THREE.InstancedMesh(geometry, material, entries.length);
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      dummy.position.set(entry.x, entry.y, entry.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(entry.sx, entry.sy, entry.sz);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.name = 'city-roof-batch';
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
+    mesh.instanceMatrix.needsUpdate = true;
+    city.add(mesh);
+  }
+
+  function addInstancedCityWindows(city, batches) {
+    addWindowBatch(city, batches.warmGlow, warmWindowGlowMaterial, 'city-window-warm-glow-batch');
+    addWindowBatch(city, batches.coolGlow, coolWindowGlowMaterial, 'city-window-cool-glow-batch');
+    addWindowBatch(city, batches.warm, warmWindowMaterial, 'city-window-warm-batch');
+    addWindowBatch(city, batches.cool, coolWindowMaterial, 'city-window-cool-batch');
+    addFarCityWindowDots(city, batches);
+  }
+
+  function addWindowBatch(city, entries, material, name) {
+    if (!entries.length) return;
+    const batchMaterial = material.clone();
+    batchMaterial.userData = { ...material.userData };
+    batchMaterial.userData.cityWindowLod = 'near';
+    batchMaterial.userData.nearFadeStart = CITY_WINDOW_NEAR_FADE_START;
+    batchMaterial.userData.nearFadeEnd = CITY_WINDOW_NEAR_FADE_END;
+    const mesh = new THREE.InstancedMesh(buildingWindowGeometry, batchMaterial, entries.length);
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      dummy.position.set(entry.x, entry.y, entry.z);
+      dummy.rotation.set(0, entry.ry || 0, 0);
+      dummy.scale.set(entry.sx, entry.sy, 1);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.name = name;
+    mesh.renderOrder = name.includes('glow') ? 7 : 8;
+    mesh.frustumCulled = false;
+    mesh.userData.windowLightBatch = true;
+    mesh.userData.attachedToBuildingFacade = true;
+    mesh.userData.cityWindowLod = 'near';
+    mesh.userData.windowLightCount = entries.length;
+    mesh.instanceMatrix.needsUpdate = true;
+    city.add(mesh);
+  }
+
+  function addFarCityWindowDots(city, batches) {
+    const positions = [];
+    const colors = [];
+    collectFarCityWindowDotEntries(batches.warm, positions, colors, 1.0, 0.76, 0.42);
+    collectFarCityWindowDotEntries(batches.cool, positions, colors, 0.58, 0.78, 1.0);
+    if (!positions.length) return;
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.computeBoundingSphere();
+
+    const material = new THREE.PointsMaterial({
+      size: 2.35,
+      sizeAttenuation: false,
+      map: createFarCityWindowSpriteTexture(),
+      vertexColors: true,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      alphaTest: 0.02,
+      toneMapped: false
+    });
+    const points = new THREE.Points(geometry, material);
+    points.name = 'city-far-window-light-dots';
+    points.frustumCulled = false;
+    points.visible = false;
+    points.renderOrder = 6;
+    points.userData.longRangeVisual = true;
+    points.userData.nightLight = true;
+    points.userData.cityFarWindowLight = true;
+    points.userData.windowLightBatch = true;
+    points.userData.attachedToBuildingFacade = true;
+    points.userData.sourceWindowLights = positions.length / 3;
+    points.userData.baseOpacity = 0.78;
+    points.userData.baseSize = 2.35;
+    points.userData.farFadeStart = CITY_WINDOW_FAR_FADE_START;
+    points.userData.farFadeEnd = CITY_WINDOW_FAR_FADE_END;
+    city.add(points);
+  }
+
+  function collectFarCityWindowDotEntries(entries, positions, colors, r, g, b) {
+    for (let i = 0; i < entries.length; i += CITY_FAR_WINDOW_DOT_STRIDE) {
+      const entry = entries[i];
+      if (!entry) continue;
+      positions.push(entry.x, entry.y, entry.z);
+      const floorBand = 0.86 + ((i * 17) % 11) * 0.018;
+      colors.push(r * floorBand, g * floorBand, b * floorBand);
+    }
+  }
+
+  function createFarCityWindowSpriteTexture() {
+    if (farCityWindowSpriteTexture) return farCityWindowSpriteTexture;
+    const canvas = document.createElement('canvas');
+    canvas.width = 48;
+    canvas.height = 48;
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createRadialGradient(24, 24, 0, 24, 24, 24);
+    gradient.addColorStop(0, 'rgba(255,255,255,0.95)');
+    gradient.addColorStop(0.42, 'rgba(255,245,210,0.58)');
+    gradient.addColorStop(0.82, 'rgba(255,210,120,0.12)');
+    gradient.addColorStop(1, 'rgba(255,200,80,0)');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 48, 48);
+    farCityWindowSpriteTexture = new THREE.CanvasTexture(canvas);
+    farCityWindowSpriteTexture.colorSpace = THREE.SRGBColorSpace;
+    farCityWindowSpriteTexture.needsUpdate = true;
+    return farCityWindowSpriteTexture;
+  }
+
+  function addBuildingWindowBands(windowBatches, city, building, rng) {
+    const { x, y, z, w, h, d, id } = building;
+    const rows = Math.max(2, Math.min(12, Math.floor((h - 10) / 12)));
+    const frontBackColumns = Math.max(2, Math.min(9, Math.floor((w - 8) / 7.5)));
+    const sideColumns = Math.max(2, Math.min(8, Math.floor((d - 8) / 7.5)));
+    const litChance = THREE.MathUtils.clamp(0.38 + h / 520, 0.38, 0.68);
+    const facadeSpecs = [
+      { axis: 'z', sign: 1, columns: frontBackColumns, length: w, ry: 0, primary: true },
+      { axis: 'z', sign: -1, columns: frontBackColumns, length: w, ry: Math.PI, primary: rng() > 0.42 },
+      { axis: 'x', sign: 1, columns: sideColumns, length: d, ry: Math.PI / 2, primary: rows > 3 || rng() > 0.36 },
+      { axis: 'x', sign: -1, columns: sideColumns, length: d, ry: -Math.PI / 2, primary: rows > 5 && rng() > 0.48 }
+    ];
+
+    for (const facade of facadeSpecs) {
+      if (!facade.primary) continue;
+      const usableLength = Math.max(5, facade.length - 10);
+      const sx = Math.max(2.2, Math.min(4.8, usableLength / Math.max(2.3, facade.columns * 2.45)));
+      const sy = Math.max(2.5, Math.min(4.6, (h - 10) / Math.max(3.2, rows * 2.15)));
+      for (let row = 0; row < rows; row++) {
+        const windowY = y + 6 + (row + 0.5) * ((h - 12) / rows);
+        if (windowY > y + h - 5) continue;
+        for (let col = 0; col < facade.columns; col++) {
+          if (rng() > litChance) continue;
+          const along = -usableLength / 2 + (col + 0.5) * (usableLength / facade.columns);
+          const entry = {
+            x: facade.axis === 'z' ? x + along : x + facade.sign * (w / 2 + WINDOW_LIGHT_WALL_OFFSET),
+            y: windowY,
+            z: facade.axis === 'z' ? z + facade.sign * (d / 2 + WINDOW_LIGHT_WALL_OFFSET) : z + along,
+            sx,
+            sy,
+            ry: facade.ry,
+            buildingId: id
+          };
+          addBuildingWindowEntry(windowBatches, city, entry, facade, rng);
+        }
+      }
+    }
+  }
+
+  function addBuildingWindowEntry(windowBatches, city, entry, facade, rng) {
+    const worldX = city.position.x + entry.x;
+    const worldZ = city.position.z + entry.z;
+    if (isWindowLightForbidden(worldX, worldZ) || isWindowOnCityRoad(city, entry.x, entry.z)) {
+      countBlockedWindowLight(worldX, worldZ);
+      return;
+    }
+
+    const warm = rng() > 0.34;
+    const target = warm ? windowBatches.warm : windowBatches.cool;
+    const glowTarget = warm ? windowBatches.warmGlow : windowBatches.coolGlow;
+    target.push(entry);
+    glowTarget.push({
+      ...entry,
+      x: entry.x + (facade.axis === 'x' ? facade.sign * (WINDOW_LIGHT_GLOW_OFFSET - WINDOW_LIGHT_WALL_OFFSET) : 0),
+      z: entry.z + (facade.axis === 'z' ? facade.sign * (WINDOW_LIGHT_GLOW_OFFSET - WINDOW_LIGHT_WALL_OFFSET) : 0),
+      sx: entry.sx * 1.6,
+      sy: entry.sy * 1.45
+    });
+    reportAttachedWindowLight();
+  }
+
+  function isWindowOnCityRoad(city, localX, localZ) {
+    const roadHalfWidth = CITY_ROAD_PRIMARY_WIDTH / 2 + 4;
+    const cityName = city.name || '';
+    const zone = CITY_ZONES.find(item => cityName.endsWith(item.name || '')) || null;
+    const roadSpacing = zone?.roadSpacing || 150;
+    const blocks = zone?.blocks || 6;
+    for (let i = -blocks; i <= blocks; i++) {
+      const road = i * roadSpacing;
+      if (Math.abs(localX - road) < roadHalfWidth || Math.abs(localZ - road) < roadHalfWidth) return true;
+    }
+    return false;
+  }
+
+  function createCityRoadSection(city, vertical, offset, start, end, roadMaterial, stripeMaterial, roadSegments, trafficRoutes, width, kind) {
+    const length = end - start;
+    if (length < 54) return false;
+    if (!cityRoadSectionClear(city, vertical, offset, start, end, width)) {
+      urbanIntegrityReport.roadReport.fixedCount++;
+      return false;
+    }
+  
+    const center = (start + end) / 2;
+    const localX = vertical ? offset : center;
+    const localZ = vertical ? center : offset;
+    const worldX = city.position.x + localX;
+    const worldZ = city.position.z + localZ;
+    const angle = vertical ? -Math.PI / 2 : 0;
+    createTerrainConformingPatch(worldX, worldZ, length, width, angle, roadMaterial, 1.08, Math.max(2, Math.ceil(length / 95)), 1, 2);
+    urbanIntegrityReport.roadReport.totalRoads++;
+    const segment = { vertical, offset, start, end, width, kind, bridge: false };
+    roadSegments.push(segment);
+    trafficRoutes.push(segment);
+  
+    for (let p = start + 46; p <= end - 46; p += 94) {
+      const stripeX = vertical ? offset : p;
+      const stripeZ = vertical ? p : offset;
+      const stripeWorldX = city.position.x + stripeX;
+      const stripeWorldZ = city.position.z + stripeZ;
+      if (cityRoadBlockReason(stripeWorldX, stripeWorldZ, width) !== null) continue;
+      createTerrainConformingPatch(
+        stripeWorldX,
+        stripeWorldZ,
+        28,
+        3,
+        angle,
+        stripeMaterial,
+        1.36,
+        1,
+        1,
+        3
+      );
+    }
+    return true;
+  }
+
+  function cityRoadSectionClear(city, vertical, offset, start, end, width) {
+    const length = end - start;
+    const samples = Math.max(3, Math.ceil(length / 70));
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i <= samples; i++) {
+      const p = THREE.MathUtils.lerp(start, end, i / samples);
+      const localX = vertical ? offset : p;
+      const localZ = vertical ? p : offset;
+      const worldX = city.position.x + localX;
+      const worldZ = city.position.z + localZ;
+      if (cityRoadBlockReason(worldX, worldZ, width) !== null) return false;
+      const y = terrainHeight(worldX, worldZ);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+    return maxY - minY < 36;
+  }
+
+  function createCityStreetlights(city, roadSegments, zone, rng, cityBuildingRects) {
+    if (!roadSegments.length) return;
+    const entries = [];
+    for (const segment of roadSegments) {
+      const length = segment.end - segment.start;
+      const spacing = segment.kind === 'primary'
+        ? Math.max(92, zone.streetlightSpacing || 122)
+        : Math.max(135, (zone.streetlightSpacing || 122) * 1.45);
+      if (length < spacing * 0.54) continue;
+      if (segment.kind !== 'primary' && rng() > 0.62) continue;
+
+      const sides = segment.kind === 'primary'
+        ? [-1, 1]
+        : [Math.sin(segment.offset * 0.017 + zone.x * 0.001) > 0 ? 1 : -1];
+      for (let p = segment.start + spacing * 0.45; p <= segment.end - spacing * 0.35; p += spacing) {
+        for (const side of sides) {
+          const sideOffset = segment.width / 2 + STREETLIGHT_EDGE_OFFSET;
+          const localX = segment.vertical ? segment.offset + side * sideOffset : p;
+          const localZ = segment.vertical ? p : segment.offset + side * sideOffset;
+          const worldX = city.position.x + localX;
+          const worldZ = city.position.z + localZ;
+          const baseY = terrainHeight(worldX, worldZ);
+          if (!cityStreetlightClear(worldX, worldZ, baseY, cityBuildingRects)) {
+            urbanIntegrityReport.streetlightReport.fixedCount++;
+            continue;
+          }
+          entries.push({ x: localX, y: baseY, z: localZ });
+        }
+      }
+    }
+
+    addInstancedStreetlights(city, entries);
+  }
+
+  function cityStreetlightClear(worldX, worldZ, baseY, cityBuildingRects) {
+    if (!Number.isFinite(baseY) || baseY < WATER_LEVEL + 0.35) return false;
+    if (isUrbanAirportExcluded(worldX, worldZ, 70) || isInRunwayProtectedArea(worldX, worldZ, 24)) return false;
+    if (isRoadWaterBlocked(worldX, worldZ, 118)) return false;
+    if (cityBuildingRects.some(rect => Math.abs(worldX - rect.x) < rect.halfW && Math.abs(worldZ - rect.z) < rect.halfD)) return false;
+    return true;
+  }
+
+  function addInstancedStreetlights(city, entries) {
+    if (!entries.length) return;
+    const poleMesh = new THREE.InstancedMesh(streetlightPoleGeometry, streetlightPoleMaterial, entries.length);
+    const lampMesh = new THREE.InstancedMesh(streetlightLampGeometry, streetlightLampMaterial, entries.length);
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      dummy.position.set(entry.x, entry.y + STREETLIGHT_HEIGHT / 2, entry.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, STREETLIGHT_HEIGHT, 1);
+      dummy.updateMatrix();
+      poleMesh.setMatrixAt(i, dummy.matrix);
+
+      dummy.position.set(entry.x, entry.y + STREETLIGHT_HEIGHT + 0.6, entry.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.setScalar(1.35);
+      dummy.updateMatrix();
+      lampMesh.setMatrixAt(i, dummy.matrix);
+    }
+
+    poleMesh.name = 'city-streetlight-pole-batch';
+    poleMesh.castShadow = false;
+    poleMesh.receiveShadow = true;
+    poleMesh.userData.diagnosticType = 'streetlight';
+    poleMesh.userData.diagnosticCount = entries.length;
+    poleMesh.userData.streetlightBatch = true;
+    poleMesh.instanceMatrix.needsUpdate = true;
+    city.add(poleMesh);
+
+    lampMesh.name = 'city-streetlight-lamp-batch';
+    lampMesh.renderOrder = 9;
+    lampMesh.userData.streetlightBatch = true;
+    lampMesh.instanceMatrix.needsUpdate = true;
+    city.add(lampMesh);
+    urbanIntegrityReport.streetlightReport.totalStreetlights += entries.length;
+  }
+
+  function createCityTraffic(city, zone, trafficRoutes, rng, denseCity) {
+    const drivableRoutes = trafficRoutes.filter(route => route.end - route.start > (route.bridge ? 95 : 150));
+    if (!drivableRoutes.length) return;
+    const carColors = [0xd84747, 0xf1c84b, 0x4d8bd6, 0xe6e9ec, 0x222c36, 0x4bbf77, 0xd88a3d];
+    const requested = zone.cars || 44;
+    const targetCars = Math.min(
+      denseCity ? requested : Math.max(4, Math.round(requested * 0.36)),
+      Math.max(4, drivableRoutes.length * (denseCity ? 3 : 2))
+    );
+    let added = 0;
+    let attempts = 0;
+    while (added < targetCars && attempts < targetCars * 8) {
+      attempts++;
+      const route = drivableRoutes[Math.floor(rng() * drivableRoutes.length)];
+      const direction = rng() > 0.5 ? 1 : -1;
+      const laneOffset = (rng() > 0.5 ? 1 : -1) * Math.min(route.width * 0.26, 9.5);
+      const margin = route.bridge ? 18 : 36;
+      const routePosition = route.start + margin + rng() * Math.max(1, route.end - route.start - margin * 2);
+      if (!isTrafficRoutePointClear(city, route, routePosition, laneOffset)) continue;
+      const world = cityRoadWorldPoint(city, route.vertical, route.offset, routePosition, laneOffset);
+      const rotation = cityTrafficRotation(route, direction);
+      const y = cityTrafficVehicleY(city, route, routePosition);
+      const color = carColors[Math.floor(rng() * carColors.length)];
+      const renderedCar = trafficRenderer.addCar(world.x, y, world.z, rotation, color);
+      const trafficCar = {
+        renderedCar,
+        city,
+        route,
+        routePosition,
+        laneOffset,
+        rotation,
+        direction,
+        speed: (route.bridge ? 10 : 13) + rng() * (route.kind === 'primary' ? 19 : 13),
+        onBridgeRoute: route.bridge === true
+      };
+      if (!renderedCar) trafficCar.group = createCar(city, world.x - city.position.x, y, world.z - city.position.z, rotation, color);
+      trafficCars.push(trafficCar);
+      added++;
+    }
+    refreshVehicleIntegrityReport();
+  }
+
+  function cityTrafficRotation(route, direction) {
+    if (route.vertical) return direction > 0 ? 0 : Math.PI;
+    return direction > 0 ? Math.PI / 2 : -Math.PI / 2;
+  }
+
+  function cityTrafficVehicleY(city, route, routePosition) {
+    return cityTrafficRoadSurfaceY(city, route, routePosition) + 0.62;
+  }
+
+  function cityTrafficRoadSurfaceY(city, route, routePosition) {
+    if (route.bridge) return cityBridgeRouteSurfaceY(route, routePosition);
+    const world = cityRoadWorldPoint(city, route.vertical, route.offset, routePosition);
+    return terrainHeight(world.x, world.z) + 1.08;
+  }
+
+  function cityBridgeRouteSurfaceY(route, routePosition) {
+    if (routePosition <= route.deckStart) {
+      const t = smoothstep(0, 1, (routePosition - route.start) / Math.max(1, route.deckStart - route.start));
+      return THREE.MathUtils.lerp(route.startGroundY, route.deckSurfaceWorldY, t);
+    }
+    if (routePosition >= route.deckEnd) {
+      const t = smoothstep(0, 1, (routePosition - route.deckEnd) / Math.max(1, route.end - route.deckEnd));
+      return THREE.MathUtils.lerp(route.deckSurfaceWorldY, route.endGroundY, t);
+    }
+    return route.deckSurfaceWorldY;
+  }
+
+  function isTrafficRoutePointClear(city, route, routePosition, laneOffset = 0) {
+    const world = cityRoadWorldPoint(city, route.vertical, route.offset, routePosition, laneOffset);
+    if (isVehicleAirportOperationalBlocked(world.x, world.z, 46)) return false;
+    if (!route.bridge && isRoadWaterBlocked(world.x, world.z, Math.max(78, route.width * 1.6))) return false;
+    const y = terrainHeight(world.x, world.z);
+    return Number.isFinite(y) && (route.bridge || y > WATER_LEVEL + 0.65);
+  }
+
+  function advanceTrafficCarOnRoute(car, stepDt) {
+    const route = car.route;
+    const length = route.end - route.start;
+    if (length <= 1) return;
+    car.routePosition += car.direction * car.speed * stepDt;
+    while (car.routePosition > route.end) car.routePosition = route.start + (car.routePosition - route.end);
+    while (car.routePosition < route.start) car.routePosition = route.end - (route.start - car.routePosition);
+    let guard = 0;
+    while (!isTrafficRoutePointClear(car.city, route, car.routePosition, car.laneOffset) && guard < 18) {
+      car.routePosition += car.direction * Math.max(14, route.width * 0.9);
+      while (car.routePosition > route.end) car.routePosition = route.start + (car.routePosition - route.end);
+      while (car.routePosition < route.start) car.routePosition = route.end - (route.start - car.routePosition);
+      guard++;
+      vehicleFixCount++;
+    }
+    const world = cityRoadWorldPoint(car.city, route.vertical, route.offset, car.routePosition, car.laneOffset);
+    const y = cityTrafficVehicleY(car.city, route, car.routePosition);
+    car.rotation = cityTrafficRotation(route, car.direction);
+    if (car.renderedCar) trafficRenderer.setCarTransform(car.renderedCar, world.x, y, world.z, car.rotation);
+    else if (car.group) {
+      car.group.position.set(world.x - car.city.position.x, y, world.z - car.city.position.z);
+      car.group.rotation.y = car.rotation;
+    }
+  }
+
+  function airportVehicleZoneAt(x, z, margin = 0) {
+    for (const airport of AIRPORTS) {
+      const local = airportLocal(airport, x, z);
+      const size = airport.size || 1;
+      const runwayLength = airport.runwayLength || 1320;
+      const runwayWidth = airport.runwayWidth || 98;
+      const taxiX = runwayWidth * 1.18 + 70 * size;
+      const taxiZ = runwayLength * 0.08;
+      const taxiLength = Math.max(430 * size, runwayLength * 0.45);
+      const apronW = airport.apronWidth || 420 * size;
+      const apronD = airport.apronDepth || 310 * size;
+      const apronX = taxiX + apronW * 0.45;
+      const apronZ = runwayLength * 0.16;
+      if (Math.abs(local.x) < runwayWidth * 0.72 + margin && Math.abs(local.z) < runwayLength / 2 + 150 + margin) return 'runway';
+      if (Math.abs(local.x - taxiX) < Math.max(28, 34 * size) + margin && Math.abs(local.z - taxiZ) < taxiLength / 2 + 70 + margin) return 'taxiway';
+      if (Math.abs(local.x - taxiX * 0.52) < taxiX * 0.62 + margin && Math.abs(local.z + runwayLength * 0.16) < Math.max(38, 42 * size) + margin) return 'taxiway';
+      if (Math.abs(local.x - apronX) < apronW / 2 + 86 + margin && Math.abs(local.z - apronZ) < apronD / 2 + 92 + margin) return 'apron';
+      if (isInAirportPavementLocal(airport, local, 52 + margin)) return 'operational';
+    }
+    return null;
+  }
+
+  function isVehicleAirportOperationalBlocked(x, z, margin = 0) {
+    if (airportVehicleZoneAt(x, z, margin)) return true;
+    return isUrbanAirportExcluded(x, z, Math.max(72, margin)) ||
+      isRunwayEndUrbanRoadZone(x, z) ||
+      isInRunwayApproach(x, z, 360 + margin, 1320 + margin * 4);
+  }
+
+  function refreshVehicleIntegrityReport() {
+    const report = urbanIntegrityReport.vehicleReport;
+    report.totalActiveVehicles = trafficCars.length;
+    report.vehiclesOnValidRoads = 0;
+    report.vehiclesOnBridges = 0;
+    report.vehiclesOffRoadCount = 0;
+    report.vehiclesEnteringAirportZones = 0;
+    report.vehiclesOnRunways = 0;
+    report.vehiclesOnTaxiways = 0;
+    report.vehiclesOnAprons = 0;
+    report.vehiclesFixedCount = vehicleFixCount;
+
+    for (const car of trafficCars) {
+      let worldX;
+      let worldZ;
+      if (car.route) {
+        const world = cityRoadWorldPoint(car.city, car.route.vertical, car.route.offset, car.routePosition, car.laneOffset || 0);
+        worldX = world.x;
+        worldZ = world.z;
+      } else if (car.renderedCar) {
+        worldX = car.renderedCar.x;
+        worldZ = car.renderedCar.z;
+      } else if (car.group && car.city) {
+        worldX = car.city.position.x + car.group.position.x;
+        worldZ = car.city.position.z + car.group.position.z;
+      } else {
+        continue;
+      }
+      const zone = airportVehicleZoneAt(worldX, worldZ, 8);
+      if (zone) {
+        report.vehiclesEnteringAirportZones++;
+        if (zone === 'runway') report.vehiclesOnRunways++;
+        if (zone === 'taxiway') report.vehiclesOnTaxiways++;
+        if (zone === 'apron') report.vehiclesOnAprons++;
+      }
+      if (car.route?.bridge) report.vehiclesOnBridges++;
+      if (!car.route?.bridge && isRoadWaterBlocked(worldX, worldZ, 56)) report.vehiclesOffRoadCount++;
+      if (!zone && (car.route?.bridge || !isRoadWaterBlocked(worldX, worldZ, 56))) report.vehiclesOnValidRoads++;
+    }
+  }
+
+  function createCar(parent, x, y, z, rotation, color) {
+    const group = new THREE.Group();
+    group.position.set(x, y, z);
+    group.rotation.y = rotation;
+    parent.add(group);
+  
+    const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.48, metalness: 0.08 });
+    const glassMaterial = new THREE.MeshStandardMaterial({ color: 0x9ed8f3, roughness: 0.18, metalness: 0.02 });
+    const tireMaterial = new THREE.MeshStandardMaterial({ color: 0x111820, roughness: 0.72 });
+  
+    const body = new THREE.Mesh(new THREE.BoxGeometry(6.2, 1.65, 10.2), bodyMaterial);
+    body.position.y = 0.9;
+    body.castShadow = false;
+    group.add(body);
+  
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(4.6, 1.45, 4.4), glassMaterial);
+    cabin.position.set(0, 2.1, -0.7);
+    cabin.castShadow = false;
+    group.add(cabin);
+  
+    for (const wheel of [[-3.1, 0.45, -3.3], [3.1, 0.45, -3.3], [-3.1, 0.45, 3.3], [3.1, 0.45, 3.3]]) {
+      const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.52, 12), tireMaterial);
+      tire.rotation.z = Math.PI / 2;
+      tire.position.set(wheel[0], wheel[1], wheel[2]);
+      group.add(tire);
+    }
+  
+    return group;
+  }
+
+  function createTrafficRenderer() {
+    const bodyGeometry = new THREE.BoxGeometry(6.2, 1.65, 10.2);
+    const cabinGeometry = new THREE.BoxGeometry(4.6, 1.45, 4.4);
+    const tireGeometry = new THREE.CylinderGeometry(0.72, 0.72, 0.52, 10);
+    const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.48, metalness: 0.08, vertexColors: true });
+    const cabinMaterial = new THREE.MeshStandardMaterial({ color: 0x9ed8f3, roughness: 0.18, metalness: 0.02 });
+    const tireMaterial = new THREE.MeshStandardMaterial({ color: 0x111820, roughness: 0.72 });
+    const bodyMesh = new THREE.InstancedMesh(bodyGeometry, bodyMaterial, TRAFFIC_CAR_CAPACITY);
+    const cabinMesh = new THREE.InstancedMesh(cabinGeometry, cabinMaterial, TRAFFIC_CAR_CAPACITY);
+    const tireMesh = new THREE.InstancedMesh(tireGeometry, tireMaterial, TRAFFIC_CAR_CAPACITY * 4);
+    const colorHelper = new THREE.Color();
+    const carDummy = new THREE.Object3D();
+    let count = 0;
+    let dirty = false;
+
+    for (const mesh of [bodyMesh, cabinMesh, tireMesh]) {
+      mesh.count = 0;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.frustumCulled = true;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      scene.add(mesh);
+    }
+
+    bodyMesh.userData.diagnosticType = 'vehicle';
+    bodyMesh.userData.diagnosticCount = 0;
+
+    function addCar(x, y, z, rotation, color) {
+      if (count >= TRAFFIC_CAR_CAPACITY) return null;
+      const index = count++;
+      const car = { index, x, y, z, rotation };
+      bodyMesh.count = count;
+      cabinMesh.count = count;
+      tireMesh.count = count * 4;
+      bodyMesh.setColorAt(index, colorHelper.setHex(color));
+      bodyMesh.userData.diagnosticCount = count;
+      setCarTransform(car, x, y, z, rotation);
+      bodyMesh.instanceColor.needsUpdate = true;
+      return car;
+    }
+
+    function setCarTransform(car, x, y, z, rotation) {
+      car.x = x;
+      car.y = y;
+      car.z = z;
+      car.rotation = rotation;
+      setBodyMatrix(car.index, x, y + 0.9, z, rotation);
+      setCabinMatrix(car.index, x, y, z, rotation);
+      setTireMatrices(car.index, x, y, z, rotation);
+      dirty = true;
+    }
+
+    function setBodyMatrix(index, x, y, z, rotation) {
+      carDummy.position.set(x, y, z);
+      carDummy.rotation.set(0, rotation, 0);
+      carDummy.scale.set(1, 1, 1);
+      carDummy.updateMatrix();
+      bodyMesh.setMatrixAt(index, carDummy.matrix);
+    }
+
+    function setCabinMatrix(index, x, y, z, rotation) {
+      const p = rotatedTrafficOffset(x, z, 0, -0.7, rotation);
+      carDummy.position.set(p.x, y + 2.1, p.z);
+      carDummy.rotation.set(0, rotation, 0);
+      carDummy.scale.set(1, 1, 1);
+      carDummy.updateMatrix();
+      cabinMesh.setMatrixAt(index, carDummy.matrix);
+    }
+
+    function setTireMatrices(index, x, y, z, rotation) {
+      const wheels = [[-3.1, -3.3], [3.1, -3.3], [-3.1, 3.3], [3.1, 3.3]];
+      for (let i = 0; i < wheels.length; i++) {
+        const p = rotatedTrafficOffset(x, z, wheels[i][0], wheels[i][1], rotation);
+        carDummy.position.set(p.x, y + 0.45, p.z);
+        carDummy.rotation.set(0, rotation, Math.PI / 2);
+        carDummy.scale.set(1, 1, 1);
+        carDummy.updateMatrix();
+        tireMesh.setMatrixAt(index * 4 + i, carDummy.matrix);
+      }
+    }
+
+    function flush() {
+      if (!dirty) return;
+      bodyMesh.instanceMatrix.needsUpdate = true;
+      cabinMesh.instanceMatrix.needsUpdate = true;
+      tireMesh.instanceMatrix.needsUpdate = true;
+      dirty = false;
+    }
+
+    return { addCar, setCarTransform, flush };
+  }
+
+  function rotatedTrafficOffset(x, z, localX, localZ, rotation) {
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    return {
+      x: x + localX * cos + localZ * sin,
+      z: z - localX * sin + localZ * cos
+    };
+  }
+
+  function updateTraffic(dt, qualityPreset = null) {
+    trafficUpdateDebt += dt;
+    const interval = qualityPreset?.trafficUpdateInterval ?? 0.04;
+    if (trafficUpdateDebt < interval) return;
+    const stepDt = trafficUpdateDebt;
+    trafficUpdateDebt = 0;
+    for (const car of trafficCars) {
+      if (car.route) {
+        advanceTrafficCarOnRoute(car, stepDt);
+        continue;
+      }
+      if (car.renderedCar) {
+        if (car.axis === 'x') car.localX += car.direction * car.speed * stepDt;
+        else car.localZ += car.direction * car.speed * stepDt;
+        if (car.axis === 'x' && car.direction > 0 && car.localX > car.max) car.localX = car.min;
+        if (car.axis === 'x' && car.direction < 0 && car.localX < car.min) car.localX = car.max;
+        if (car.axis === 'z' && car.direction > 0 && car.localZ > car.max) car.localZ = car.min;
+        if (car.axis === 'z' && car.direction < 0 && car.localZ < car.min) car.localZ = car.max;
+      } else {
+        car.group.position[car.axis] += car.direction * car.speed * stepDt;
+        if (car.direction > 0 && car.group.position[car.axis] > car.max) car.group.position[car.axis] = car.min;
+        if (car.direction < 0 && car.group.position[car.axis] < car.min) car.group.position[car.axis] = car.max;
+      }
+
+      let worldX = car.renderedCar ? car.city.position.x + car.localX : car.city.position.x + car.group.position.x;
+      let worldZ = car.renderedCar ? car.city.position.z + car.localZ : car.city.position.z + car.group.position.z;
+      let guard = 0;
+      while ((isRoadWaterBlocked(worldX, worldZ, 150) || isUrbanAirportExcluded(worldX, worldZ, 40) || isRunwayEndUrbanRoadZone(worldX, worldZ)) && guard < 28) {
+        if (car.renderedCar) {
+          if (car.axis === 'x') car.localX += car.direction * 44;
+          else car.localZ += car.direction * 44;
+          if (car.axis === 'x' && car.direction > 0 && car.localX > car.max) car.localX = car.min;
+          if (car.axis === 'x' && car.direction < 0 && car.localX < car.min) car.localX = car.max;
+          if (car.axis === 'z' && car.direction > 0 && car.localZ > car.max) car.localZ = car.min;
+          if (car.axis === 'z' && car.direction < 0 && car.localZ < car.min) car.localZ = car.max;
+          worldX = car.city.position.x + car.localX;
+          worldZ = car.city.position.z + car.localZ;
+        } else {
+          car.group.position[car.axis] += car.direction * 44;
+          if (car.direction > 0 && car.group.position[car.axis] > car.max) car.group.position[car.axis] = car.min;
+          if (car.direction < 0 && car.group.position[car.axis] < car.min) car.group.position[car.axis] = car.max;
+          worldX = car.city.position.x + car.group.position.x;
+          worldZ = car.city.position.z + car.group.position.z;
+        }
+        guard++;
+      }
+      const y = terrainHeight(worldX, worldZ) + 1.7;
+      if (car.renderedCar) trafficRenderer.setCarTransform(car.renderedCar, worldX, y, worldZ, car.rotation);
+      else car.group.position.y = y;
+    }
+    trafficRenderer.flush();
+    refreshVehicleIntegrityReport();
+  }
+
+  function createForests() {
+    const rng = mulberry32(92410);
+    const trunkGeometry = new THREE.CylinderGeometry(1.4, 1.8, 10, 7);
+    const crownGeometry = new THREE.ConeGeometry(8, 22, 8);
+    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x6f5135, roughness: 0.88 });
+    const crownMaterial = new THREE.MeshStandardMaterial({ color: 0x245f39, roughness: 0.92 });
+    const hiddenIslandTreeCapacity = 1800;
+    const treeCapacity = FOREST_CLUSTERS.reduce((sum, cluster) => sum + cluster.count, 0) + hiddenIslandTreeCapacity;
+    const trunks = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, treeCapacity);
+    const crowns = new THREE.InstancedMesh(crownGeometry, crownMaterial, treeCapacity);
+    const dummy = new THREE.Object3D();
+    let treeCount = 0;
+
+    const addTree = (x, z, scale, angle) => {
+      if (treeCount >= treeCapacity) return false;
+      const y = terrainHeight(x, z);
+
+      dummy.position.set(x, y + 5 * scale, z);
+      dummy.rotation.set(0, angle, 0);
+      dummy.scale.setScalar(scale);
+      dummy.updateMatrix();
+      trunks.setMatrixAt(treeCount, dummy.matrix);
+
+      dummy.position.set(x, y + 17 * scale, z);
+      dummy.rotation.set(0, angle * 1.7, 0);
+      dummy.scale.setScalar(scale);
+      dummy.updateMatrix();
+      crowns.setMatrixAt(treeCount, dummy.matrix);
+      treeCount++;
+      return true;
+    };
+  
+    for (const cluster of FOREST_CLUSTERS) {
+      for (let i = 0; i < cluster.count; i++) {
+        const angle = rng() * Math.PI * 2;
+        const radius = Math.sqrt(rng()) * cluster.radius;
+        const x = cluster.x + Math.cos(angle) * radius;
+        const z = cluster.z + Math.sin(angle) * radius;
+        if (
+          isWaterSurface(x, z) ||
+          isUrbanAirportExcluded(x, z, 64) ||
+          isNearRunwaySafety(x, z, 310, 930) ||
+          isInRunwayApproach(x, z, 330, 1300) ||
+          isHiddenAirportTreeExcluded(x, z, 20)
+        ) continue;
+        const scale = 0.72 + rng() * 1.1;
+        addTree(x, z, scale, angle);
+      }
+    }
+
+    createHiddenIslandDenseForest(addTree, rng);
+
+    if (treeCount > 0) {
+      trunks.count = treeCount;
+      crowns.count = treeCount;
+      trunks.instanceMatrix.needsUpdate = true;
+      crowns.instanceMatrix.needsUpdate = true;
+      trunks.castShadow = false;
+      crowns.castShadow = false;
+      trunks.receiveShadow = false;
+      crowns.receiveShadow = false;
+      trunks.userData.diagnosticType = 'tree';
+      trunks.userData.diagnosticCount = treeCount;
+      crowns.userData.diagnosticType = 'tree';
+      crowns.userData.diagnosticCount = 0;
+      trunks.computeBoundingSphere();
+      crowns.computeBoundingSphere();
+      scene.add(trunks);
+      scene.add(crowns);
+    }
+  }
+
+  function createHiddenIslandDenseForest(addTree, rng) {
+    for (const island of ISLANDS) {
+      if (!(island.hiddenIsland || island.noResidential)) continue;
+
+      const spacing = 43;
+      for (let lx = -island.rx * 0.93; lx <= island.rx * 0.93; lx += spacing) {
+        for (let lz = -island.rz * 0.93; lz <= island.rz * 0.93; lz += spacing) {
+          const jitterX = (rng() - 0.5) * spacing * 0.72;
+          const jitterZ = (rng() - 0.5) * spacing * 0.72;
+          const localX = lx + jitterX;
+          const localZ = lz + jitterZ;
+          const normalized = (localX * localX) / (island.rx * island.rx) + (localZ * localZ) / (island.rz * island.rz);
+          if (normalized > 0.9) continue;
+
+          const world = waterBodyWorld(island, localX, localZ);
+          if (waterBodyNormalized(island, world.x, world.z) > 0.96) continue;
+          if (isHiddenAirportTreeExcluded(world.x, world.z, 24)) continue;
+          if (isWaterSurface(world.x, world.z)) continue;
+          const y = terrainHeight(world.x, world.z);
+          if (y < WATER_LEVEL + 2 || y > WATER_LEVEL + 170) continue;
+
+          const interior = 1 - THREE.MathUtils.clamp(normalized / 0.9, 0, 1);
+          const density = THREE.MathUtils.lerp(0.58, 0.9, Math.pow(interior, 0.34));
+          if (rng() > density) continue;
+
+          const angle = rng() * Math.PI * 2;
+          const scale = 0.64 + rng() * 1.18 + interior * 0.18;
+          addTree(world.x, world.z, scale, angle);
+        }
+      }
+
+      for (let i = 0; i < 220; i++) {
+        const angle = rng() * Math.PI * 2;
+        const radius = Math.sqrt(rng()) * 0.9;
+        const localX = Math.cos(angle) * island.rx * radius;
+        const localZ = Math.sin(angle) * island.rz * radius;
+        const world = waterBodyWorld(island, localX, localZ);
+        if (waterBodyNormalized(island, world.x, world.z) > 0.97) continue;
+        if (isHiddenAirportTreeExcluded(world.x, world.z, 26) || isWaterSurface(world.x, world.z)) continue;
+        const y = terrainHeight(world.x, world.z);
+        if (y < WATER_LEVEL + 2 || y > WATER_LEVEL + 170) continue;
+        addTree(world.x, world.z, 0.7 + rng() * 1.24, angle);
+      }
+    }
+  }
+
+  function isHiddenAirportTreeExcluded(x, z, crownRadius = 0) {
+    for (const airport of AIRPORTS) {
+      if (airport.airportCategory !== 'HIDDEN_REMOTE_AIRFIELD') continue;
+      const layout = hiddenAirportLayout(airport);
+      const local = airportLocal(airport, x, z);
+      const margin = Math.max(34, crownRadius + 26);
+
+      if (rectContainsLocal(local, 0, 0, layout.runwayWidth * 2.55 + margin, layout.runwayLength * 0.5 + 190 + margin)) return true;
+      if (rectContainsLocal(local, layout.taxiX, layout.taxiZ, Math.max(28, 34 * layout.size) * 0.5 + 52 + margin, layout.taxiLength * 0.5 + 96 + margin)) return true;
+      if (rectContainsLocal(local, layout.taxiX * 0.52, -layout.runwayLength * 0.16, layout.taxiX * 0.62 + margin, Math.max(30, 36 * layout.size) * 0.5 + 54 + margin)) return true;
+      if (rectContainsLocal(local, layout.apronX, layout.apronZ, layout.apronW * 0.5 + 78 + margin, layout.apronD * 0.5 + 82 + margin)) return true;
+      if (rectContainsLocal(local, layout.terminalX, layout.terminalZ, layout.terminalHalfX + 34 + margin, layout.terminalHalfZ + 34 + margin)) return true;
+
+      for (const stand of hiddenUfoStandPositions(layout)) {
+        if (Math.hypot(local.x - stand.x, local.z - stand.z) < 34 + margin) return true;
+      }
+
+      const threshold = layout.runwayLength * 0.5;
+      const beyond = Math.max(local.z - threshold, -local.z - threshold);
+      if (beyond > 0 && beyond < 430) {
+        const halfWidth = layout.runwayWidth * 4.2 + beyond * 0.24 + margin;
+        if (Math.abs(local.x) < halfWidth) return true;
+      }
+    }
+    return false;
+  }
+
+  function hiddenAirportLayout(airport) {
+    const size = airport.size || 1;
+    const runwayLength = airport.runwayLength || 1320;
+    const runwayWidth = airport.runwayWidth || 98;
+    const taxiX = runwayWidth * 1.18 + 70 * size;
+    const taxiZ = runwayLength * 0.08;
+    const taxiLength = Math.max(430 * size, runwayLength * 0.45);
+    const apronW = airport.apronWidth || 420 * size;
+    const apronD = airport.apronDepth || 310 * size;
+    const apronX = taxiX + apronW * 0.45;
+    const apronZ = runwayLength * 0.16;
+    const hutW = Math.max(18, 24 * size);
+    const hutD = Math.max(12, 15 * size);
+    return {
+      size,
+      runwayLength,
+      runwayWidth,
+      taxiX,
+      taxiZ,
+      taxiLength,
+      apronW,
+      apronD,
+      apronX,
+      apronZ,
+      terminalX: apronX - apronW * 0.56,
+      terminalZ: apronZ - apronD * 0.62,
+      terminalHalfX: hutW * 0.5 + 7,
+      terminalHalfZ: hutD * 0.5 + 7
+    };
+  }
+
+  function hiddenUfoStandPositions(layout) {
+    return [
+      { x: layout.apronX - 66, z: layout.apronZ - 36 },
+      { x: layout.apronX, z: layout.apronZ - 36 },
+      { x: layout.apronX + 66, z: layout.apronZ - 36 },
+      { x: layout.apronX - 66, z: layout.apronZ + 36 },
+      { x: layout.apronX, z: layout.apronZ + 36 },
+      { x: layout.apronX + 66, z: layout.apronZ + 36 }
+    ];
+  }
+
+  function rectContainsLocal(local, x, z, halfX, halfZ) {
+    return Math.abs(local.x - x) <= halfX && Math.abs(local.z - z) <= halfZ;
+  }
+
+  function createWoodlandCabins() {
+    const rng = mulberry32(53513);
+    const houseColors = [0xc9d1d0, 0xd7c3a3, 0xb8c8bd, 0xd0b29d, 0xc7d5bc];
+    const roofColors = [0x72473c, 0x4b5662, 0x365b49, 0x6b5941];
+  
+    for (const cluster of FOREST_CLUSTERS) {
+      let placed = 0;
+      for (let i = 0; i < cluster.cabins * 8 && placed < cluster.cabins; i++) {
+        const angle = rng() * Math.PI * 2;
+        const radius = Math.sqrt(rng()) * cluster.radius * 0.92;
+        const x = cluster.x + Math.cos(angle) * radius;
+        const z = cluster.z + Math.sin(angle) * radius;
+        const y = terrainHeight(x, z);
+        if (Math.abs(x) > MAP_SIZE / 2 - EDGE_OCEAN_WIDTH - 80 || Math.abs(z) > MAP_SIZE / 2 - EDGE_OCEAN_WIDTH - 80) continue;
+        if (isWaterSurface(x, z) || isUrbanAirportExcluded(x, z, 70) || isNearRunwaySafety(x, z, 300, 900) || isInRunwayApproach(x, z, 320, 1300)) continue;
+        if (y < WATER_LEVEL + 3 || y > 230) continue;
+        createSmallHouse(
+          x,
+          z,
+          houseColors[Math.floor(rng() * houseColors.length)],
+          roofColors[Math.floor(rng() * roofColors.length)],
+          0.62 + rng() * 0.95
+        );
+        placed++;
+      }
+    }
+  }
+
+  function createVillages() {
+    const rng = mulberry32(44519);
+    const houseColors = [0xcfd7dd, 0xd7c2a0, 0xbacbbf, 0xd9b8a8, 0xc7d2b6, 0xded2aa];
+    const roofColors = [0x74483d, 0x4d5863, 0x355e4e, 0x725942, 0x6b4238];
+    const barnMaterial = new THREE.MeshStandardMaterial({ color: 0xa94f44, roughness: 0.74 });
+    const roofMaterial = new THREE.MeshStandardMaterial({ color: 0x4f5964, roughness: 0.78 });
+  
+    for (const village of VILLAGES) {
+      let placed = 0;
+      for (let i = 0; i < village.houses * 8 && placed < village.houses; i++) {
+        const angle = rng() * Math.PI * 2;
+        const radius = Math.sqrt(rng()) * village.radius;
+        const x = village.x + Math.cos(angle) * radius;
