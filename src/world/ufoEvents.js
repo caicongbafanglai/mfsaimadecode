@@ -152,6 +152,7 @@ export function createUfoEventController({
     let coreVisible = true;
     let glowIntensity = 0.18;
     let speedKts = 0;
+    let visualState = { visualContact: false, signalOffset: false };
 
     vectors.position.set(spawn.x, groundY + 28, spawn.z);
     if (elapsed < takeoffStart) {
@@ -175,18 +176,37 @@ export function createUfoEventController({
       glowIntensity = 0.56;
     } else if (elapsed < departStart) {
       phase = UFO_EVENT_STATES.TRACK_PLAYER;
-      const bob = Math.sin(nowMs * 0.002) * 6.2;
+      const trackElapsed = elapsed - trackStart;
+      const target = sideEncounterTarget(payload, payload.targetPlayerId || payload.triggerPlayerId);
+      const fallbackPosition = state.visualPosition || state.position;
+      const targetPosition = readPoint(target?.position || fallbackPosition, fallbackPosition);
+      const targetHeading = finite(target?.heading, state.heading || 0);
+      const targetSpeed = finite(target?.speed, state.speed || payload.speedKts || 180);
+      const leg = islandFollowLeg(payload, durations.trackMs);
+      const progress = THREE.MathUtils.clamp(trackElapsed / Math.max(1, durations.trackMs), 0, 1);
+      const bob = Math.sin(nowMs * 0.0018 + finite(leg?.bobPhase, 0)) * 6.2;
+      setSideEncounterRelativePosition(vectors.control, targetPosition, targetHeading, leg, progress, nowMs);
+      vectors.control.y += bob;
       vectors.position.set(spawn.x, targetAltitudeM + bob, spawn.z);
-      glowIntensity = 0.62;
+      const approachMs = Math.min(5200, Math.max(2800, durations.trackMs * 0.06));
+      vectors.position.lerp(vectors.control, smoothstep(0, approachMs, trackElapsed));
+      visualState = keepSideEncounterInForwardView(vectors.position, targetPosition, targetHeading, nowMs);
+      glowIntensity = 0.7 + Math.sin(nowMs * 0.0021) * 0.06;
+      speedKts = THREE.MathUtils.clamp(Math.round(targetSpeed + finite(payload.speedOffsetKts, 0)), 120, 380);
     } else if (elapsed < disappearStart) {
       phase = UFO_EVENT_STATES.FAST_DEPARTURE;
       const t = smoothstep(0, durations.departMs, elapsed - departStart);
       const departureSpeed = payload.departureSpeed || 1300;
       const departure = readDirection(payload.departureDirection, playerAwayDirection(spawn));
+      const target = sideEncounterTarget(payload, payload.targetPlayerId || payload.triggerPlayerId);
+      const fallbackPosition = state.visualPosition || state.position;
+      const targetPosition = readPoint(target?.position || fallbackPosition, fallbackPosition);
+      const targetHeading = finite(target?.heading, state.heading || 0);
+      setSideEncounterRelativePosition(vectors.control, targetPosition, targetHeading, islandFollowLeg(payload, durations.trackMs), 1, nowMs);
       vectors.position.set(
-        spawn.x + departure.x * departureSpeed * (elapsed - departStart) / 1000,
-        targetAltitudeM + 220 * t,
-        spawn.z + departure.z * departureSpeed * (elapsed - departStart) / 1000
+        vectors.control.x + departure.x * departureSpeed * (elapsed - departStart) / 1000,
+        vectors.control.y + 220 * t,
+        vectors.control.z + departure.z * departureSpeed * (elapsed - departStart) / 1000
       );
       glowIntensity = 0.78 + (1 - t) * 0.42;
       speedKts = 999;
@@ -203,7 +223,14 @@ export function createUfoEventController({
     }
 
     renderEvent({
-      payload,
+      payload: {
+        ...payload,
+        visualContact: visualState.visualContact,
+        signalOffset: visualState.signalOffset,
+        mapSpeedUnknown: phase === UFO_EVENT_STATES.PRE_GLOW ||
+          phase === UFO_EVENT_STATES.VERTICAL_TAKEOFF ||
+          phase === UFO_EVENT_STATES.HOVER
+      },
       phase,
       position: vectors.position,
       visible,
@@ -592,8 +619,7 @@ export function createUfoEventController({
 
     const contactPosition = lastContactPosition || { x: position.x, y: position.y, z: position.z };
     const hover = phase === UFO_EVENT_STATES.HOVER ||
-      phase === UFO_EVENT_STATES.TRACK_PLAYER ||
-      phase === UFO_EVENT_STATES.WORLD_TRACKING;
+      ((phase === UFO_EVENT_STATES.TRACK_PLAYER || phase === UFO_EVENT_STATES.WORLD_TRACKING) && Math.abs(speedKts || 0) < 5);
     const fast = phase === UFO_EVENT_STATES.FAST_DEPARTURE ||
       speedKts >= 999;
     const distance = Math.hypot(contactPosition.x - state.position.x, contactPosition.z - state.position.z);
@@ -614,7 +640,10 @@ export function createUfoEventController({
       visualContact: Boolean(payload.visualContact) && !lost,
       signalOffset: Boolean(payload.signalOffset) && !lost,
       signalDegraded: Boolean(payload.signalIntermittent) || distance < 9000 || ((payload.mode === UFO_EVENT_MODES.WORLD_ROAMING || payload.mode === UFO_EVENT_MODES.NIGHT_ENCOUNTER) && distance > 52000),
-      intermittent: payload.mode === UFO_EVENT_MODES.WORLD_ROAMING || payload.mode === UFO_EVENT_MODES.NIGHT_ENCOUNTER || payload.mode === UFO_EVENT_MODES.PLAYER_SIDE_ENCOUNTER,
+      intermittent: payload.mode === UFO_EVENT_MODES.WORLD_ROAMING ||
+        payload.mode === UFO_EVENT_MODES.NIGHT_ENCOUNTER ||
+        payload.mode === UFO_EVENT_MODES.PLAYER_SIDE_ENCOUNTER ||
+        payload.mode === UFO_EVENT_MODES.ISLAND_EVENT,
       updatedAtMs: now
     };
   }
@@ -649,6 +678,11 @@ export function createUfoEventController({
 
   function updateReport(payload, phase, visible, coreVisible, managedIslandUfo = null) {
     const apronReport = managedIslandUfo?.getReport?.() || null;
+    const islandEvent = payload?.mode === UFO_EVENT_MODES.ISLAND_EVENT;
+    const followDuration = payload?.followDurationMs || payload?.durations?.trackMs || 0;
+    const currentSpeed = state.ufoContact?.speed;
+    const currentVisual = Boolean(state.ufoContact?.visualContact);
+    const currentBehind = Boolean(state.ufoContact?.signalOffset);
     report = {
       active: Boolean(payload && visible),
       eventId: payload?.ufoEventId || '',
@@ -663,6 +697,18 @@ export function createUfoEventController({
       sideEncounterForwardVisible: payload?.mode === UFO_EVENT_MODES.PLAYER_SIDE_ENCOUNTER ? 'PASS' : 'READY',
       sideEncounterMinimumVisible30s: payload?.mode === UFO_EVENT_MODES.PLAYER_SIDE_ENCOUNTER ? 'PASS' : 'READY',
       sideEncounterVisibilityRecovery: payload?.mode === UFO_EVENT_MODES.PLAYER_SIDE_ENCOUNTER ? 'PASS' : 'READY',
+      islandUfoSixSelectedForTakeoff: islandEvent
+        ? (apronReport?.activeIndex === 5 ? 'PASS' : 'WAITING')
+        : 'READY',
+      islandApronCountAfterTakeoff: apronReport?.apronCountAfterTakeoff ?? 'WAITING',
+      islandNoDuplicatedSeventhUfo: apronReport?.noExtraCopiedUfo || 'WAITING',
+      islandFollowDurationExtended: islandEvent ? (followDuration >= 60000 ? 'PASS' : 'FAIL') : 'READY',
+      islandMinimumVisible45s: islandEvent ? (payload?.sideEncounter?.minimumVisibleDurationMs >= 45000 ? 'PASS' : 'FAIL') : 'READY',
+      islandUfoVisibleInPlayerView: islandEvent ? (currentVisual ? 'PASS' : phase === UFO_EVENT_STATES.TRACK_PLAYER ? 'RECOVERING' : 'WAITING') : 'READY',
+      islandUfoNotBehindPlayer: islandEvent ? (!currentBehind ? 'PASS' : 'RECOVERING') : 'READY',
+      islandUfoSpeedReduced: islandEvent
+        ? (Number.isFinite(currentSpeed) && currentSpeed > 0 && currentSpeed < 420 ? 'PASS' : phase === UFO_EVENT_STATES.TRACK_PLAYER ? 'WAITING' : 'READY')
+        : 'READY',
       ufoIs3D: 'PASS',
       ufoTrue3D: 'PASS',
       ufoHasVolumeAndThickness: 'PASS',
@@ -1106,11 +1152,11 @@ function createDetailTexture() {
 function normalizeIslandDurations(payload) {
   const durations = payload.durations || {};
   return {
-    preGlowMs: durations.preGlowMs || 1800,
-    takeoffMs: durations.takeoffMs || 5200,
+    preGlowMs: durations.preGlowMs || 3200,
+    takeoffMs: durations.takeoffMs || 11000,
     hoverMs: durations.hoverMs || 5200,
-    trackMs: durations.trackMs || 2300,
-    departMs: durations.departMs || 1400,
+    trackMs: durations.trackMs || 90000,
+    departMs: durations.departMs || 5200,
     lostMs: durations.lostMs || CONTACT_LOST_HOLD_MS
   };
 }
@@ -1186,6 +1232,24 @@ function sideEncounterLegProgress(leg, elapsedMs) {
   return THREE.MathUtils.clamp((elapsedMs - start) / (end - start), 0, 1);
 }
 
+function islandFollowLeg(payload, durationMs) {
+  const leg = payload.sideEncounter?.legs?.[0];
+  if (leg) return leg;
+  const side = (payload.ufoIndex || 0) % 2 === 0 ? -1 : 1;
+  return {
+    playerId: payload.targetPlayerId || payload.triggerPlayerId,
+    startMs: 0,
+    endMs: Math.max(45000, finite(durationMs, 60000)),
+    startOffset: { rightM: side * 860, forwardM: 1350, upM: 420 },
+    endOffset: { rightM: side * 680, forwardM: 1050, upM: 360 },
+    bobPhase: 0.4,
+    bobMeters: 7,
+    driftMeters: side * 44,
+    microShiftMeters: -side * 70,
+    microShiftPeriodMs: 6800
+  };
+}
+
 function setSideEncounterRelativePosition(target, targetPosition, headingDeg, leg, progress, nowMs) {
   const startOffset = leg?.startOffset || { rightM: -850, forwardM: 300, upM: 260 };
   const endOffset = leg?.endOffset || startOffset;
@@ -1248,25 +1312,60 @@ function sideEncounterRelativeComponents(position, targetPosition, headingDeg) {
 
 function createDebugIslandPayload(nowMs) {
   const spawn = islandFallbackSpawnPoint();
+  const player = window.MHFS_DEBUG_STATE?.position || { x: spawn.x + 1200, y: 2500, z: spawn.z - 900 };
+  const heading = window.MHFS_DEBUG_STATE?.heading || 45;
   return {
     ufoEventId: `DEBUG-ISLAND-${Math.floor(nowMs / 1000)}`,
     mode: UFO_EVENT_MODES.ISLAND_EVENT,
     state: UFO_EVENT_STATES.PRE_GLOW,
-    ufoIndex: 0,
+    ufoIndex: 5,
     apronInitialUfoCount: 6,
     apronRemainingAfterTakeoff: 5,
     startTime: nowMs,
-    endTime: nowMs + 18000,
+    endTime: nowMs + 118000,
     spawnPoint: spawn,
     targetAltitudeFt: 7200,
-    departureSpeed: 1400,
+    departureSpeed: 420,
+    departureSpeedKts: 999,
     departureDirection: { x: 0.86, z: -0.5 },
+    targetPlayerId: 'debug-player',
+    targetPlayerIds: ['debug-player'],
+    targetPlayers: [{
+      playerId: 'debug-player',
+      position: { x: player.x, y: player.y, z: player.z },
+      heading,
+      speed: 220,
+      altitude: Math.round(player.y * M_TO_FT),
+      altitudeAGL: Math.round(player.y * M_TO_FT)
+    }],
+    followDurationMs: 90000,
+    sideEncounter: {
+      speedMatch: true,
+      visibleConeDeg: 120,
+      minimumVisibleDurationMs: 45000,
+      legs: [{
+        playerId: 'debug-player',
+        startMs: 0,
+        endMs: 90000,
+        startOffset: { rightM: 860, forwardM: 1300, upM: 420 },
+        endOffset: { rightM: 680, forwardM: 1050, upM: 360 },
+        bobPhase: 0.4,
+        bobMeters: 7,
+        driftMeters: 44,
+        microShiftMeters: -70,
+        microShiftPeriodMs: 6800
+      }]
+    },
+    speedKts: 220,
+    speedOffsetKts: 0,
+    visualContact: false,
+    signalIntermittent: true,
     durations: {
-      preGlowMs: 1600,
-      takeoffMs: 4200,
+      preGlowMs: 2800,
+      takeoffMs: 11000,
       hoverMs: 3800,
-      trackMs: 2200,
-      departMs: 1400,
+      trackMs: 90000,
+      departMs: 5200,
       lostMs: CONTACT_LOST_HOLD_MS
     }
   };

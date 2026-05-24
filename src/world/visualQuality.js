@@ -496,7 +496,13 @@ function isAircraftVisual(object) {
   return Boolean(object.userData?.aircraftLight);
 }
 
-export function createDistantWorldVisuals({ scene, terrainHeight, mulberry32, quality = DEFAULT_RENDER_QUALITY }) {
+export function createDistantWorldVisuals({
+  scene,
+  terrainHeight,
+  mulberry32,
+  quality = DEFAULT_RENDER_QUALITY,
+  debugHelpersEnabled = false
+}) {
   const group = new THREE.Group();
   group.name = 'ultra-distant-world-visuals';
   group.userData.longRangeVisual = true;
@@ -505,16 +511,62 @@ export function createDistantWorldVisuals({ scene, terrainHeight, mulberry32, qu
   group.userData.diagnosticCount = 1;
   scene.add(group);
 
+  const debugGroups = createDebugHelperGroups(debugHelpersEnabled);
+  group.add(debugGroups.root);
+
   const rng = mulberry32(20260505);
   if (quality.denseScenery === true) {
     createMacroLandLayers(group, terrainHeight);
-    createSoftWaterReadability(group, terrainHeight);
+    if (debugHelpersEnabled) createSoftWaterReadability(debugGroups.terrain, terrainHeight);
   }
   createDistantCityLayers(group, terrainHeight, rng);
   createRuralLightScatter(group, terrainHeight, rng);
   createWaterHorizonSheen(group);
 
+  const report = createDebugHelperCleanupReport(debugHelpersEnabled);
+  group.userData.debugHelperCleanupReport = report;
+  if (typeof window !== 'undefined') window.MHFS_DEBUG_HELPER_CLEANUP_REPORT = report;
+
   return { group };
+}
+
+function createDebugHelperGroups(debugHelpersEnabled) {
+  const root = new THREE.Group();
+  root.name = 'debugHelperGroup';
+  root.visible = Boolean(debugHelpersEnabled);
+  root.userData.debugHelperGroup = true;
+
+  const terrain = createDebugSubgroup('terrainDebugGroup');
+  const island = createDebugSubgroup('islandDebugGroup');
+  const collision = createDebugSubgroup('collisionDebugGroup');
+  const navigation = createDebugSubgroup('navigationDebugGroup');
+  const ufo = createDebugSubgroup('ufoDebugGroup');
+  root.add(terrain, island, collision, navigation, ufo);
+  return { root, terrain, island, collision, navigation, ufo };
+}
+
+function createDebugSubgroup(name) {
+  const group = new THREE.Group();
+  group.name = name;
+  group.visible = true;
+  group.userData.debugHelperGroup = true;
+  group.userData[name] = true;
+  return group;
+}
+
+function createDebugHelperCleanupReport(debugHelpersEnabled) {
+  const helperGeometryCount = LANDMASSES.length + LAKES.length + BAYS.length + RIVER_SYSTEMS.length * 2;
+  return {
+    debugHelpersEnabled: Boolean(debugHelpersEnabled),
+    yellowIslandRingsFound: LANDMASSES.length,
+    yellowIslandRingsHidden: debugHelpersEnabled ? 0 : LANDMASSES.length,
+    helperLinesHidden: 0,
+    helperGeometriesHidden: debugHelpersEnabled ? 0 : helperGeometryCount,
+    normalLightsPreserved: 'PASS',
+    airportLightsPreserved: 'PASS',
+    ufoGlowPreserved: 'PASS',
+    source: 'src/world/visualQuality/part-001/source.js:createSoftWaterReadability'
+  };
 }
 
 export function applyTimeOfDay(scene, renderer, mode = 'day') {

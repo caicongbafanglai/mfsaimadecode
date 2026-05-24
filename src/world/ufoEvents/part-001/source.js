@@ -151,6 +151,7 @@ export function createUfoEventController({
     let coreVisible = true;
     let glowIntensity = 0.18;
     let speedKts = 0;
+    let visualState = { visualContact: false, signalOffset: false };
 
     vectors.position.set(spawn.x, groundY + 28, spawn.z);
     if (elapsed < takeoffStart) {
@@ -174,18 +175,37 @@ export function createUfoEventController({
       glowIntensity = 0.56;
     } else if (elapsed < departStart) {
       phase = UFO_EVENT_STATES.TRACK_PLAYER;
-      const bob = Math.sin(nowMs * 0.002) * 6.2;
+      const trackElapsed = elapsed - trackStart;
+      const target = sideEncounterTarget(payload, payload.targetPlayerId || payload.triggerPlayerId);
+      const fallbackPosition = state.visualPosition || state.position;
+      const targetPosition = readPoint(target?.position || fallbackPosition, fallbackPosition);
+      const targetHeading = finite(target?.heading, state.heading || 0);
+      const targetSpeed = finite(target?.speed, state.speed || payload.speedKts || 180);
+      const leg = islandFollowLeg(payload, durations.trackMs);
+      const progress = THREE.MathUtils.clamp(trackElapsed / Math.max(1, durations.trackMs), 0, 1);
+      const bob = Math.sin(nowMs * 0.0018 + finite(leg?.bobPhase, 0)) * 6.2;
+      setSideEncounterRelativePosition(vectors.control, targetPosition, targetHeading, leg, progress, nowMs);
+      vectors.control.y += bob;
       vectors.position.set(spawn.x, targetAltitudeM + bob, spawn.z);
-      glowIntensity = 0.62;
+      const approachMs = Math.min(5200, Math.max(2800, durations.trackMs * 0.06));
+      vectors.position.lerp(vectors.control, smoothstep(0, approachMs, trackElapsed));
+      visualState = keepSideEncounterInForwardView(vectors.position, targetPosition, targetHeading, nowMs);
+      glowIntensity = 0.7 + Math.sin(nowMs * 0.0021) * 0.06;
+      speedKts = THREE.MathUtils.clamp(Math.round(targetSpeed + finite(payload.speedOffsetKts, 0)), 120, 380);
     } else if (elapsed < disappearStart) {
       phase = UFO_EVENT_STATES.FAST_DEPARTURE;
       const t = smoothstep(0, durations.departMs, elapsed - departStart);
       const departureSpeed = payload.departureSpeed || 1300;
       const departure = readDirection(payload.departureDirection, playerAwayDirection(spawn));
+      const target = sideEncounterTarget(payload, payload.targetPlayerId || payload.triggerPlayerId);
+      const fallbackPosition = state.visualPosition || state.position;
+      const targetPosition = readPoint(target?.position || fallbackPosition, fallbackPosition);
+      const targetHeading = finite(target?.heading, state.heading || 0);
+      setSideEncounterRelativePosition(vectors.control, targetPosition, targetHeading, islandFollowLeg(payload, durations.trackMs), 1, nowMs);
       vectors.position.set(
-        spawn.x + departure.x * departureSpeed * (elapsed - departStart) / 1000,
-        targetAltitudeM + 220 * t,
-        spawn.z + departure.z * departureSpeed * (elapsed - departStart) / 1000
+        vectors.control.x + departure.x * departureSpeed * (elapsed - departStart) / 1000,
+        vectors.control.y + 220 * t,
+        vectors.control.z + departure.z * departureSpeed * (elapsed - departStart) / 1000
       );
       glowIntensity = 0.78 + (1 - t) * 0.42;
       speedKts = 999;
@@ -202,7 +222,14 @@ export function createUfoEventController({
     }
 
     renderEvent({
-      payload,
+      payload: {
+        ...payload,
+        visualContact: visualState.visualContact,
+        signalOffset: visualState.signalOffset,
+        mapSpeedUnknown: phase === UFO_EVENT_STATES.PRE_GLOW ||
+          phase === UFO_EVENT_STATES.VERTICAL_TAKEOFF ||
+          phase === UFO_EVENT_STATES.HOVER
+      },
       phase,
       position: vectors.position,
       visible,

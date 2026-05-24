@@ -150,13 +150,9 @@ export const BRIDGES = [
   { name: 'Aurora West Bridge', x: -13000, z: -3950, heading: Math.PI * 0.3, length: 680, width: 74, lift: 12, clearance: 26 },
   { name: 'Aurora Gulf Bridge', x: -6640, z: -8764, heading: Math.PI * 0.18, length: 620, width: 70, lift: 11, clearance: 26 },
   { name: 'Meridian Sound Bridge', x: 10800, z: -3150, heading: Math.PI * 0.26, length: 720, width: 76, lift: 13, clearance: 30 },
-  { name: 'Meridian Lake Bridge', x: 5900, z: -720, heading: Math.PI * 0.52, length: 560, width: 64, lift: 10, clearance: 24 },
   { name: 'Southreach Bay Bridge', x: -2200, z: 8460, heading: Math.PI * 0.62, length: 640, width: 68, lift: 12, clearance: 28 },
-  { name: 'Ridge Gate River Bridge', x: -6564, z: 10732, heading: Math.PI * 0.44, length: 620, width: 56, lift: 14, clearance: 28 },
   { name: 'Cascade Lagoon Bridge', x: -21450, z: 7360, heading: Math.PI * 0.34, length: 560, width: 60, lift: 12, clearance: 27 },
-  { name: 'Northstar Fjord Bridge', x: 3960, z: -20760, heading: Math.PI * 0.66, length: 600, width: 62, lift: 13, clearance: 28 },
-  { name: 'Northstar Mere Bridge', x: 1640, z: -20180, heading: Math.PI * 0.68, length: 430, width: 52, lift: 11, clearance: 25 },
-  { name: 'Crescent Sound Causeway', x: 20180, z: 13580, heading: Math.PI * 0.6, length: 390, width: 46, lift: 9, clearance: 22 }
+  { name: 'Northstar Fjord Bridge', x: 3960, z: -20760, heading: Math.PI * 0.66, length: 600, width: 62, lift: 13, clearance: 28 }
 ];
 
 export const CONNECTING_ROADS = [
@@ -251,6 +247,14 @@ export const FOREST_CLUSTERS = [
   { x: -22900, z: 4120, radius: 720, count: 88, cabins: 3 },
   { x: 4380, z: -19000, radius: 590, count: 66, cabins: 2 },
   { x: 21100, z: -7520, radius: 330, count: 38, cabins: 0 },
+  { x: 12580, z: 6420, radius: 420, count: 54, cabins: 1 },
+  { x: 10680, z: 10480, radius: 300, count: 42, cabins: 0 },
+  { x: -2840, z: -14480, radius: 310, count: 44, cabins: 0 },
+  { x: -12380, z: 5740, radius: 260, count: 32, cabins: 0 },
+  { x: 21480, z: -8320, radius: 280, count: 34, cabins: 0 },
+  { x: 20040, z: 14320, radius: 280, count: 34, cabins: 0 },
+  { x: -21880, z: 13040, radius: 220, count: 28, cabins: 0 },
+  { x: 15120, z: 10180, radius: 220, count: 26, cabins: 0 },
   { x: -22960, z: 21610, radius: 520, count: 140, cabins: 0, hiddenIslandForest: true },
   { x: -23780, z: 21680, radius: 390, count: 82, cabins: 0, hiddenIslandForest: true },
   { x: -24120, z: 22430, radius: 360, count: 64, cabins: 0, hiddenIslandForest: true }
@@ -282,7 +286,15 @@ export const VILLAGES = [
   { name: 'Outer Shoal Fishers', x: 23800, z: 7600, radius: 185, houses: 10, road: [[23690, 7550], [23800, 7600], [23920, 7660]] },
   { name: 'Farpoint Ridge Homes', x: 21100, z: -7520, radius: 230, houses: 14, road: [[21100, -7520], [21700, -7440], [22600, -7480]] },
   { name: 'Cascade Upland Rows', x: -22900, z: 4120, radius: 330, houses: 24, road: [[-22900, 4120], [-22340, 5060], [-21780, 5700]] },
-  { name: 'Northstar Ridge Hamlet', x: 4540, z: -19020, radius: 290, houses: 20, road: [[4540, -19020], [3820, -19580], [2600, -19680]] }
+  { name: 'Northstar Ridge Hamlet', x: 4540, z: -19020, radius: 290, houses: 20, road: [[4540, -19020], [3820, -19580], [2600, -19680]] },
+  { name: 'Harbor West Orchard', x: 12560, z: 6460, radius: 260, houses: 18, road: [[12560, 6460], [12920, 6170], [13280, 5920]] },
+  { name: 'Beacon South Croft', x: 10680, z: 10480, radius: 210, houses: 14, road: [[10680, 10480], [10520, 10280], [10400, 10090]] },
+  { name: 'Northwatch South Crofts', x: -2820, z: -14480, radius: 230, houses: 12, road: [[-2820, -14480], [-2960, -14240], [-3100, -14020]] },
+  { name: 'Sable Hill Rows', x: -12380, z: 5740, radius: 190, houses: 10, road: [[-12380, 5740], [-12520, 5580], [-12620, 5400]] },
+  { name: 'Farpoint North Lots', x: 21480, z: -8320, radius: 210, houses: 12, road: [[21480, -8320], [21800, -8080], [22030, -7920]] },
+  { name: 'Crescent West Gardens', x: 20040, z: 14320, radius: 205, houses: 10, road: [[20040, 14320], [20220, 14180], [20480, 14020]] },
+  { name: 'Mistral West Crofts', x: -21880, z: 13040, radius: 165, houses: 8, road: [[-21880, 13040], [-21720, 12920], [-21620, 12820]] },
+  { name: 'Windward East Homes', x: 15080, z: 10180, radius: 170, houses: 8, road: [[15080, 10180], [14820, 10320], [14620, 10380]] }
 ];
 
 export const FARM_REGIONS = [
@@ -305,5 +317,13 @@ export const FARM_REGIONS = [
   { name: 'Outer Shoal Garden Plots', x: 23800, z: 7600, rx: 310, rz: 180, rotation: 0.12, fields: 5, houses: 2 },
   { name: 'Cascade Upland Crofts', x: -22900, z: 4120, rx: 1180, rz: 580, rotation: -0.28, fields: 22, houses: 12 },
   { name: 'Northstar Ridge Farms', x: 4300, z: -18950, rx: 980, rz: 540, rotation: 0.22, fields: 18, houses: 10 },
-  { name: 'Farpoint Hill Gardens', x: 21100, z: -7520, rx: 520, rz: 320, rotation: 0.12, fields: 8, houses: 4 }
+  { name: 'Farpoint Hill Gardens', x: 21100, z: -7520, rx: 520, rz: 320, rotation: 0.12, fields: 8, houses: 4 },
+  { name: 'Harbor West Orchard Plots', x: 12580, z: 6440, rx: 520, rz: 320, rotation: -0.2, fields: 8, houses: 4 },
+  { name: 'Beacon South Garden Plots', x: 10670, z: 10470, rx: 370, rz: 230, rotation: 0.34, fields: 6, houses: 3 },
+  { name: 'Northwatch South Fields', x: -2820, z: -14480, rx: 430, rz: 260, rotation: -0.18, fields: 6, houses: 3 },
+  { name: 'Sable Hill Vegetable Gardens', x: -12380, z: 5740, rx: 330, rz: 210, rotation: 0.48, fields: 5, houses: 2 },
+  { name: 'Farpoint North Gardens', x: 21480, z: -8320, rx: 390, rz: 240, rotation: 0.18, fields: 6, houses: 3 },
+  { name: 'Crescent West Terraces', x: 20040, z: 14320, rx: 400, rz: 230, rotation: -0.46, fields: 5, houses: 2 },
+  { name: 'Mistral West Gardens', x: -21880, z: 13040, rx: 300, rz: 180, rotation: 0.08, fields: 4, houses: 2 },
+  { name: 'Windward East Kitchen Gardens', x: 15080, z: 10180, rx: 300, rz: 190, rotation: -0.3, fields: 4, houses: 2 }
 ];

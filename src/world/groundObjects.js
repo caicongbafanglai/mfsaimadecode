@@ -56,6 +56,7 @@ const CITY_BRIDGE_EDGE_HEIGHT = 2.8;
 const CITY_BRIDGE_MIN_RAMP_LENGTH = 92;
 const VEHICLE_ROAD_SURFACE_CLEARANCE = 0.28;
 const VILLAGE_VEHICLE_TERRAIN_Y_OFFSET = 1.38;
+const VEHICLE_COLOR_RECENT_WINDOW = 3;
 const VEHICLE_COLOR_ORDER = [
   'white',
   'black',
@@ -128,7 +129,7 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
   const groundOverlayRects = [];
   let trafficUpdateDebt = 0;
   let vehicleFixCount = 0;
-  const vehicleLastColorByArea = new Map();
+  const vehicleRecentColorsByArea = new Map();
   const houseWindowGeometry = new THREE.PlaneGeometry(4.2, 3.2);
   const houseWindowGlowGeometry = new THREE.PlaneGeometry(8.6, 6.2);
   const buildingWindowGeometry = new THREE.PlaneGeometry(1, 1);
@@ -318,12 +319,14 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
 
   function chooseVehicleColor(profileName, rng, areaKey = 'global') {
     const profile = VEHICLE_COLOR_PROFILES[profileName] || VEHICLE_COLOR_PROFILES.city;
-    const last = vehicleLastColorByArea.get(areaKey);
+    const recent = vehicleRecentColorsByArea.get(areaKey) || [];
     let entry = weightedVehicleColor(profile, rng);
-    for (let attempt = 0; attempt < 4 && entry.name === last && profile.length > 1; attempt++) {
+    for (let attempt = 0; attempt < 8 && recent.includes(entry.name) && profile.length > VEHICLE_COLOR_RECENT_WINDOW; attempt++) {
       entry = weightedVehicleColor(profile, rng);
     }
-    vehicleLastColorByArea.set(areaKey, entry.name);
+    recent.push(entry.name);
+    while (recent.length > VEHICLE_COLOR_RECENT_WINDOW) recent.shift();
+    vehicleRecentColorsByArea.set(areaKey, recent);
     recordVehicleColor(entry.name);
     return entry.hex;
   }
@@ -792,7 +795,7 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
     const cityRoadSegments = [];
     const trafficRoutes = [];
     const cityBridgeRegistry = [];
-    city.userData.bridgeLimit = zone.radius > 1600 ? 4 : zone.radius > 900 ? 3 : 2;
+    city.userData.bridgeLimit = zone.radius > 1600 ? 2 : zone.radius > 900 ? 1 : 0;
     const primaryBridgeOrder = cityRoadPositionsByBridgePriority(roadPositions);
   
     for (const x of primaryBridgeOrder) createCityRoadSegments(city, true, x, span, roadMaterial, stripeMaterial, bridgeMaterials, cityRoadSegments, trafficRoutes, CITY_ROAD_PRIMARY_WIDTH, 'primary', cityBridgeRegistry);
@@ -1123,7 +1126,8 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
 
   function cityBridgePlanningRejection(city, kind, bridgeType, gapLength, centerWorld, cityBridgeRegistry = []) {
     if (kind !== 'primary') return 'secondary';
-    if (cityBridgeRegistry.length >= (city.userData.bridgeLimit || 3)) return 'spacing';
+    if (bridgeType === 'small' && gapLength < 118) return 'spacing';
+    if (cityBridgeRegistry.length >= (city.userData.bridgeLimit ?? 3)) return 'spacing';
     const minSpacing = cityBridgeMinimumSpacing(bridgeType, gapLength);
     for (const existing of cityBridgeRegistry) {
       if (Math.hypot(centerWorld.x - existing.x, centerWorld.z - existing.z) < minSpacing) return 'spacing';
@@ -1132,9 +1136,9 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
   }
 
   function cityBridgeMinimumSpacing(bridgeType, gapLength) {
-    if (bridgeType === 'large' || gapLength >= 260) return 800;
-    if (bridgeType === 'medium' || gapLength >= 150) return 500;
-    return 300;
+    if (bridgeType === 'large' || gapLength >= 260) return 960;
+    if (bridgeType === 'medium' || gapLength >= 150) return 620;
+    return 380;
   }
 
   function cityBridgeType(kind, width, gapLength, x, z) {
@@ -1526,7 +1530,7 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
       urbanIntegrityReport.roadReport.fixedCount++;
       return false;
     }
-  
+
     const center = (start + end) / 2;
     const localX = vertical ? offset : center;
     const localZ = vertical ? center : offset;
@@ -1538,7 +1542,7 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
     const segment = { vertical, offset, start, end, width, kind, bridge: false };
     roadSegments.push(segment);
     trafficRoutes.push(segment);
-  
+
     for (let p = start + 46; p <= end - 46; p += 94) {
       const stripeX = vertical ? offset : p;
       const stripeZ = vertical ? p : offset;
@@ -1848,28 +1852,28 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
     group.userData.diagnosticType = 'vehicle';
     group.userData.diagnosticCount = 1;
     parent.add(group);
-  
+
     const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.48, metalness: 0.08 });
     const glassMaterial = new THREE.MeshStandardMaterial({ color: 0x9ed8f3, roughness: 0.18, metalness: 0.02 });
     const tireMaterial = new THREE.MeshStandardMaterial({ color: 0x111820, roughness: 0.72 });
-  
+
     const body = new THREE.Mesh(new THREE.BoxGeometry(6.2, 1.65, 10.2), bodyMaterial);
     body.position.y = 0.9;
     body.castShadow = false;
     group.add(body);
-  
+
     const cabin = new THREE.Mesh(new THREE.BoxGeometry(4.6, 1.45, 4.4), glassMaterial);
     cabin.position.set(0, 2.1, -0.7);
     cabin.castShadow = false;
     group.add(cabin);
-  
+
     for (const wheel of [[-3.1, 0.45, -3.3], [3.1, 0.45, -3.3], [-3.1, 0.45, 3.3], [3.1, 0.45, 3.3]]) {
       const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.52, 12), tireMaterial);
       tire.rotation.z = Math.PI / 2;
       tire.position.set(wheel[0], wheel[1], wheel[2]);
       group.add(tire);
     }
-  
+
     return group;
   }
 
@@ -2440,6 +2444,8 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
       addStructureFoundation,
       registerStructureFootprint,
       registerGroundOverlayRect,
+      isStructureFootprintBlocked,
+      doesPatchOverlapStructure,
       isRoadWaterBlocked,
       isInCityCore
     });
@@ -2503,6 +2509,7 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
         const width = 82 + rng() * 90;
         const depth = 54 + rng() * 70;
         const rotation = rng() * Math.PI;
+        if (doesPatchOverlapStructure(x, z, width, depth, rotation, 24) || isGroundOverlayPointBlocked(x, z, 14)) continue;
         createTerrainConformingPatch(
           x,
           z,
@@ -2510,7 +2517,7 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
           depth,
           rotation,
           fieldMaterials[Math.floor(rng() * fieldMaterials.length)],
-          0.9,
+          0.28,
           4,
           3,
           1

@@ -1,11 +1,14 @@
 import * as THREE from '../../../three.module.min.js?v=202605050057';
 import {
+  CONNECTING_ROADS,
   EDGE_OCEAN_WIDTH,
   FARM_REGIONS,
   MAP_SIZE,
+  VILLAGES,
   WATER_LEVEL
 } from '../../data/worldData.js?v=202605070100';
 import {
+  distanceToSegment,
   isInAirportExclusionZone,
   isInRunwayApproach,
   isNearRunwaySafety,
@@ -29,6 +32,8 @@ export function createFarmlandRegions({
   addStructureFoundation,
   registerStructureFootprint = () => {},
   registerGroundOverlayRect = () => {},
+  isStructureFootprintBlocked = () => false,
+  doesPatchOverlapStructure = () => false,
   isRoadWaterBlocked,
   isInCityCore
 }) {
@@ -79,7 +84,7 @@ export function createFarmlandRegions({
         placement.depth,
         placement.rotation,
         fieldMaterials[Math.floor(rng() * fieldMaterials.length)],
-        0.86,
+        0.26,
         Math.max(3, Math.ceil(placement.width / 115)),
         Math.max(2, Math.ceil(placement.depth / 105)),
         1
@@ -100,7 +105,7 @@ export function createFarmlandRegions({
           rowsAcrossWidth ? 5.5 : placement.depth * 0.88,
           placement.rotation,
           rowMaterials[Math.floor(rng() * rowMaterials.length)],
-          1.18,
+          0.42,
           rowsAcrossWidth ? Math.max(2, Math.ceil(placement.width / 150)) : 1,
           rowsAcrossWidth ? 1 : Math.max(2, Math.ceil(placement.depth / 150)),
           2
@@ -207,6 +212,7 @@ export function createFarmlandRegions({
     let maxY = -Infinity;
 
     if (rotatedPatchOverlapsAirportPavement(cx, cz, width, depth, rotation, 180)) return false;
+    if (doesPatchOverlapStructure(cx, cz, width, depth, rotation, 32)) return false;
 
     for (const sample of samples) {
       const point = rotatedOffset(cx, cz, sample[0] * width, sample[1] * depth, rotation);
@@ -300,6 +306,7 @@ export function createFarmlandRegions({
 
   function isFarmVillageSpotClear(x, z) {
     if (!isFarmGroundClear(x, z, 142, 300, 1240)) return false;
+    if (isStructureFootprintBlocked(x, z, 34)) return false;
     const y = terrainHeight(x, z);
     return y >= WATER_LEVEL + 3 && y <= 175;
   }
@@ -307,9 +314,24 @@ export function createFarmlandRegions({
   function isFarmGroundClear(x, z, waterClearance, runwayLateral, approachDistance) {
     if (Math.abs(x) > MAP_SIZE / 2 - EDGE_OCEAN_WIDTH - 120 || Math.abs(z) > MAP_SIZE / 2 - EDGE_OCEAN_WIDTH - 120) return false;
     if (isRoadWaterBlocked(x, z, waterClearance)) return false;
+    if (isNearFarmRoad(x, z, 44)) return false;
     if (isInAirportExclusionZone(x, z, 90)) return false;
     if (isNearRunwaySafety(x, z, runwayLateral, 1080) || isInRunwayApproach(x, z, 380, approachDistance)) return false;
     if (isInCityCore(x, z)) return false;
     return true;
+  }
+
+  function isNearFarmRoad(x, z, margin) {
+    for (const road of CONNECTING_ROADS) {
+      if (distanceToSegment(x, z, { x: road.x1, z: road.z1 }, { x: road.x2, z: road.z2 }) < margin + road.width * 0.5) return true;
+    }
+    for (const village of VILLAGES) {
+      for (let i = 0; i < village.road.length - 1; i++) {
+        const a = { x: village.road[i][0], z: village.road[i][1] };
+        const b = { x: village.road[i + 1][0], z: village.road[i + 1][1] };
+        if (distanceToSegment(x, z, a, b) < margin) return true;
+      }
+    }
+    return false;
   }
 }

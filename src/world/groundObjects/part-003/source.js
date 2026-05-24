@@ -1,277 +1,508 @@
-        const z = village.z + Math.sin(angle) * radius;
-        const y = terrainHeight(x, z);
-        if (Math.abs(x) > MAP_SIZE / 2 - EDGE_OCEAN_WIDTH - 80 || Math.abs(z) > MAP_SIZE / 2 - EDGE_OCEAN_WIDTH - 80) continue;
-        if (isWaterSurface(x, z) || isUrbanAirportExcluded(x, z, 70) || isNearRunwaySafety(x, z, 260, 860) || isInRunwayApproach(x, z, 320, 1250)) continue;
-        if (y < WATER_LEVEL + 3 || y > 245) continue;
-        createSmallHouse(
-          x,
-          z,
-          houseColors[Math.floor(rng() * houseColors.length)],
-          roofColors[Math.floor(rng() * roofColors.length)],
-          0.48 + rng() * 0.62
-        );
-        placed++;
-      }
-  
-      for (let i = 0; i < 2; i++) {
-        const x = village.x + (rng() - 0.5) * village.radius * 0.65;
-        const z = village.z + (rng() - 0.5) * village.radius * 0.65;
-        if (isWaterSurface(x, z) || isUrbanAirportExcluded(x, z, 70) || isNearRunwaySafety(x, z, 260, 860) || isInRunwayApproach(x, z, 320, 1250)) continue;
-        const barn = new THREE.Group();
-        barn.name = 'terrain-placed-village-barn';
-        const rotation = rng() * Math.PI;
-        const barnScale = 0.72 + rng() * 0.32;
-        const placement = placeStructureGroupOnTerrain(barn, x, z, 34, 26, rotation, barnScale, {
-          slopeTolerance: 0.5,
-          name: 'village-barn'
-        });
-        barn.scale.setScalar(barnScale);
-        barn.userData.diagnosticType = 'building';
-        barn.userData.diagnosticCount = 1;
-        registerStructureFootprint(x, z, 34 * barnScale + 12);
-        scene.add(barn);
-        addStructureFoundation(barn, 34, 26, placement, barnScale, { maxDepth: 5.5 });
-  
-        const body = new THREE.Mesh(new THREE.BoxGeometry(34, 18, 26), barnMaterial);
-        body.position.y = 9;
-        body.castShadow = false;
-        body.receiveShadow = true;
-        barn.add(body);
-  
-        const roof = new THREE.Mesh(new THREE.ConeGeometry(24, 12, 4), roofMaterial);
-        roof.position.y = 24;
-        roof.rotation.y = Math.PI / 4;
-        roof.castShadow = false;
-        barn.add(roof);
-      }
+  function createCityRoadSection(city, vertical, offset, start, end, roadMaterial, stripeMaterial, roadSegments, trafficRoutes, width, kind) {
+    const length = end - start;
+    if (length < 54) return false;
+    if (!cityRoadSectionClear(city, vertical, offset, start, end, width)) {
+      urbanIntegrityReport.roadReport.fixedCount++;
+      return false;
     }
+
+    const center = (start + end) / 2;
+    const localX = vertical ? offset : center;
+    const localZ = vertical ? center : offset;
+    const worldX = city.position.x + localX;
+    const worldZ = city.position.z + localZ;
+    const angle = vertical ? -Math.PI / 2 : 0;
+    createTerrainConformingPatch(worldX, worldZ, length, width, angle, roadMaterial, 1.08, Math.max(2, Math.ceil(length / 95)), 1, 2);
+    urbanIntegrityReport.roadReport.totalRoads++;
+    const segment = { vertical, offset, start, end, width, kind, bridge: false };
+    roadSegments.push(segment);
+    trafficRoutes.push(segment);
+
+    for (let p = start + 46; p <= end - 46; p += 94) {
+      const stripeX = vertical ? offset : p;
+      const stripeZ = vertical ? p : offset;
+      const stripeWorldX = city.position.x + stripeX;
+      const stripeWorldZ = city.position.z + stripeZ;
+      if (cityRoadBlockReason(stripeWorldX, stripeWorldZ, width) !== null) continue;
+      createTerrainConformingPatch(
+        stripeWorldX,
+        stripeWorldZ,
+        28,
+        3,
+        angle,
+        stripeMaterial,
+        1.36,
+        1,
+        1,
+        3
+      );
+    }
+    return true;
   }
 
-  function createAirfieldLowHomes() {
-    const rng = mulberry32(60617);
-    const houseColors = [0xd5d9d5, 0xd9c4a5, 0xbfd0c1, 0xd1b6a0, 0xcdd6b7];
-    const roofColors = [0x705042, 0x4e5964, 0x3f604f, 0x75513e];
-  
-    for (const airport of AIRPORTS) {
-      if (airport.isNightCapable === false || airport.airportCategory === 'HIDDEN_REMOTE_AIRFIELD') continue;
-      const runwayLength = airport.runwayLength || 1320;
-      const runwayWidth = airport.runwayWidth || 98;
-      for (const end of [-1, 1]) {
-        const challengeSide = isChallengeEnd(airport, end);
-        const endPoint = airportWorld(airport, 0, end * (runwayLength / 2 + 650));
-        const urbanEnd = isNearCityZone(endPoint.x, endPoint.z, 1900);
-        const targetPerEnd = urbanEnd ? (airport.size > 1.05 ? 36 : 26) : (airport.size > 1.05 ? 18 : 14);
-        let placed = 0;
-        const spots = [];
-        for (let i = 0; i < targetPerEnd * 16 && placed < targetPerEnd; i++) {
-          const side = rng() > 0.5 ? 1 : -1;
-          const spread = urbanEnd ? 1.35 : 1;
-          const localX = side * (runwayWidth * (3.9 + Math.pow(rng(), 0.7) * (challengeSide ? 7.8 : 5.4) * spread) + rng() * (challengeSide ? 560 : 320));
-          const localZ = end * (runwayLength / 2 + (challengeSide ? 360 : 260) + Math.pow(rng(), 1.25) * (urbanEnd ? 1220 : 620) + (rng() - 0.5) * 170);
-          const world = airportWorld(airport, localX, localZ);
-          if (Math.abs(world.x) > MAP_SIZE / 2 - EDGE_OCEAN_WIDTH - 80 || Math.abs(world.z) > MAP_SIZE / 2 - EDGE_OCEAN_WIDTH - 80) continue;
-          if (isWaterSurface(world.x, world.z) || isUrbanAirportExcluded(world.x, world.z, 70) || isNearRunwaySafety(world.x, world.z, 230, 780) || isInRunwayApproach(world.x, world.z, 260, 920)) continue;
-          if (spots.some(spot => Math.hypot(world.x - spot.x, world.z - spot.z) < 34)) continue;
-          const y = terrainHeight(world.x, world.z);
-          const maxHouseTerrain = (airport.elevation || 0) + (airport.challenge ? 260 : 118);
-          if (y < WATER_LEVEL + 3 || y > maxHouseTerrain) continue;
-          createSmallHouse(
-            world.x,
-            world.z,
-            houseColors[Math.floor(rng() * houseColors.length)],
-            roofColors[Math.floor(rng() * roofColors.length)],
-            0.2 + rng() * 0.18
-          );
-          spots.push(world);
-          placed++;
+  function cityRoadSectionClear(city, vertical, offset, start, end, width) {
+    const length = end - start;
+    const samples = Math.max(3, Math.ceil(length / 70));
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let i = 0; i <= samples; i++) {
+      const p = THREE.MathUtils.lerp(start, end, i / samples);
+      const localX = vertical ? offset : p;
+      const localZ = vertical ? p : offset;
+      const worldX = city.position.x + localX;
+      const worldZ = city.position.z + localZ;
+      if (cityRoadBlockReason(worldX, worldZ, width) !== null) return false;
+      const y = terrainHeight(worldX, worldZ);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+    return maxY - minY < 36;
+  }
+
+  function createCityStreetlights(city, roadSegments, zone, rng, cityBuildingRects) {
+    if (!roadSegments.length) return;
+    const entries = [];
+    for (const segment of roadSegments) {
+      const length = segment.end - segment.start;
+      const spacing = segment.kind === 'primary'
+        ? Math.max(92, zone.streetlightSpacing || 122)
+        : Math.max(135, (zone.streetlightSpacing || 122) * 1.45);
+      if (length < spacing * 0.54) continue;
+      if (segment.kind !== 'primary' && rng() > 0.62) continue;
+
+      const sides = segment.kind === 'primary'
+        ? [-1, 1]
+        : [Math.sin(segment.offset * 0.017 + zone.x * 0.001) > 0 ? 1 : -1];
+      for (let p = segment.start + spacing * 0.45; p <= segment.end - spacing * 0.35; p += spacing) {
+        for (const side of sides) {
+          const sideOffset = segment.width / 2 + STREETLIGHT_EDGE_OFFSET;
+          const localX = segment.vertical ? segment.offset + side * sideOffset : p;
+          const localZ = segment.vertical ? p : segment.offset + side * sideOffset;
+          const worldX = city.position.x + localX;
+          const worldZ = city.position.z + localZ;
+          const baseY = terrainHeight(worldX, worldZ);
+          if (!cityStreetlightClear(worldX, worldZ, baseY, cityBuildingRects)) {
+            urbanIntegrityReport.streetlightReport.fixedCount++;
+            continue;
+          }
+          entries.push({ x: localX, y: baseY, z: localZ, roadSegmentId: streetlightRoadSegmentId(city, segment) });
         }
       }
     }
+
+    addInstancedStreetlights(city, entries);
   }
 
-  function createRunwayEndScatterHomes() {
-    const rng = mulberry32(92245);
-    const houseColors = [0xd7dbd5, 0xd9c6ad, 0xc8d4ca, 0xe1d2af, 0xd0c5bd, 0xc4d1d8];
-    const roofColors = [0x6f4d42, 0x4e5964, 0x385f51, 0x74513c, 0x6b443e];
-  
+  function streetlightRoadSegmentId(city, segment) {
+    const cityName = (city.name || 'city').replace(/\s+/g, '-');
+    const axis = segment.vertical ? 'vertical' : 'horizontal';
+    return `${cityName}:${axis}:${segment.kind}:${Math.round(segment.offset)}:${Math.round(segment.start)}:${Math.round(segment.end)}`;
+  }
+
+  function cityStreetlightClear(worldX, worldZ, baseY, cityBuildingRects) {
+    if (!Number.isFinite(baseY) || baseY < WATER_LEVEL + 0.35) return false;
+    if (isUrbanAirportExcluded(worldX, worldZ, 70) || isInRunwayProtectedArea(worldX, worldZ, 24)) return false;
+    if (isRoadWaterBlocked(worldX, worldZ, 118)) return false;
+    if (cityBuildingRects.some(rect => Math.abs(worldX - rect.x) < rect.halfW && Math.abs(worldZ - rect.z) < rect.halfD)) return false;
+    return true;
+  }
+
+  function addInstancedStreetlights(city, entries) {
+    if (!entries.length) return;
+    const poleMesh = new THREE.InstancedMesh(streetlightPoleGeometry, streetlightPoleMaterial, entries.length);
+    const lampMesh = new THREE.InstancedMesh(streetlightLampGeometry, streetlightLampMaterial, entries.length);
+    const dummy = new THREE.Object3D();
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      dummy.position.set(entry.x, entry.y + STREETLIGHT_HEIGHT / 2, entry.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.set(1, STREETLIGHT_HEIGHT, 1);
+      dummy.updateMatrix();
+      poleMesh.setMatrixAt(i, dummy.matrix);
+
+      dummy.position.set(entry.x, entry.y + STREETLIGHT_HEIGHT + 0.6, entry.z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.setScalar(1.35);
+      dummy.updateMatrix();
+      lampMesh.setMatrixAt(i, dummy.matrix);
+    }
+
+    poleMesh.name = 'city-streetlight-pole-batch';
+    poleMesh.castShadow = false;
+    poleMesh.receiveShadow = true;
+    poleMesh.userData.diagnosticType = 'streetlight';
+    poleMesh.userData.diagnosticCount = entries.length;
+    poleMesh.userData.streetlightBatch = true;
+    poleMesh.userData.hasRoadSegmentIds = entries.every(entry => Boolean(entry.roadSegmentId));
+    poleMesh.userData.roadSegmentIds = entries.map(entry => entry.roadSegmentId);
+    poleMesh.instanceMatrix.needsUpdate = true;
+    city.add(poleMesh);
+
+    lampMesh.name = 'city-streetlight-lamp-batch';
+    lampMesh.renderOrder = 9;
+    lampMesh.userData.streetlightBatch = true;
+    lampMesh.userData.attachedToStreetlightPole = true;
+    lampMesh.userData.hasRoadSegmentIds = poleMesh.userData.hasRoadSegmentIds;
+    lampMesh.userData.roadSegmentIds = poleMesh.userData.roadSegmentIds;
+    lampMesh.instanceMatrix.needsUpdate = true;
+    city.add(lampMesh);
+    urbanIntegrityReport.streetlightReport.totalStreetlights += entries.length;
+  }
+
+  function createCityTraffic(city, zone, trafficRoutes, rng, denseCity) {
+    const drivableRoutes = trafficRoutes.filter(route => route.end - route.start > (route.bridge ? 95 : 150));
+    if (!drivableRoutes.length) return;
+    const requested = zone.cars || 44;
+    const targetCars = Math.min(
+      denseCity ? requested : Math.max(4, Math.round(requested * 0.36)),
+      Math.max(4, drivableRoutes.length * (denseCity ? 3 : 2))
+    );
+    let added = 0;
+    let attempts = 0;
+    while (added < targetCars && attempts < targetCars * 8) {
+      attempts++;
+      const route = drivableRoutes[Math.floor(rng() * drivableRoutes.length)];
+      const direction = rng() > 0.5 ? 1 : -1;
+      const laneOffset = (rng() > 0.5 ? 1 : -1) * Math.min(route.width * 0.26, 9.5);
+      const margin = route.bridge ? 18 : 36;
+      const routePosition = route.start + margin + rng() * Math.max(1, route.end - route.start - margin * 2);
+      if (!isTrafficRoutePointClear(city, route, routePosition, laneOffset)) continue;
+      const world = cityRoadWorldPoint(city, route.vertical, route.offset, routePosition, laneOffset);
+      const rotation = cityTrafficRotation(route, direction);
+      const y = cityTrafficVehicleY(city, route, routePosition);
+      const color = chooseVehicleColor('city', rng, `city:${zone.name || city.name}`);
+      const renderedCar = trafficRenderer.addCar(world.x, y, world.z, rotation, color);
+      const trafficCar = {
+        renderedCar,
+        city,
+        route,
+        routePosition,
+        laneOffset,
+        rotation,
+        direction,
+        speed: (route.bridge ? 10 : 13) + rng() * (route.kind === 'primary' ? 19 : 13),
+        onBridgeRoute: route.bridge === true
+      };
+      if (!renderedCar) trafficCar.group = createCar(city, world.x - city.position.x, y, world.z - city.position.z, rotation, color);
+      trafficCars.push(trafficCar);
+      added++;
+    }
+    refreshVehicleIntegrityReport();
+  }
+
+  function cityTrafficRotation(route, direction) {
+    if (route.vertical) return direction > 0 ? 0 : Math.PI;
+    return direction > 0 ? Math.PI / 2 : -Math.PI / 2;
+  }
+
+  function cityTrafficVehicleY(city, route, routePosition) {
+    return cityTrafficRoadSurfaceY(city, route, routePosition) + VEHICLE_ROAD_SURFACE_CLEARANCE;
+  }
+
+  function cityTrafficRoadSurfaceY(city, route, routePosition) {
+    if (route.bridge) return cityBridgeRouteSurfaceY(route, routePosition);
+    const world = cityRoadWorldPoint(city, route.vertical, route.offset, routePosition);
+    return terrainHeight(world.x, world.z) + 1.08;
+  }
+
+  function cityBridgeRouteSurfaceY(route, routePosition) {
+    if (routePosition <= route.deckStart) {
+      const t = smoothstep(0, 1, (routePosition - route.start) / Math.max(1, route.deckStart - route.start));
+      return THREE.MathUtils.lerp(route.startGroundY, route.deckSurfaceWorldY, t);
+    }
+    if (routePosition >= route.deckEnd) {
+      const t = smoothstep(0, 1, (routePosition - route.deckEnd) / Math.max(1, route.end - route.deckEnd));
+      return THREE.MathUtils.lerp(route.deckSurfaceWorldY, route.endGroundY, t);
+    }
+    return route.deckSurfaceWorldY;
+  }
+
+  function isTrafficRoutePointClear(city, route, routePosition, laneOffset = 0) {
+    const world = cityRoadWorldPoint(city, route.vertical, route.offset, routePosition, laneOffset);
+    if (isVehicleAirportOperationalBlocked(world.x, world.z, 46)) return false;
+    if (!route.bridge && isRoadWaterBlocked(world.x, world.z, Math.max(78, route.width * 1.6))) return false;
+    const y = terrainHeight(world.x, world.z);
+    return Number.isFinite(y) && (route.bridge || y > WATER_LEVEL + 0.65);
+  }
+
+  function advanceTrafficCarOnRoute(car, stepDt) {
+    const route = car.route;
+    const length = route.end - route.start;
+    if (length <= 1) return;
+    car.routePosition += car.direction * car.speed * stepDt;
+    while (car.routePosition > route.end) car.routePosition = route.start + (car.routePosition - route.end);
+    while (car.routePosition < route.start) car.routePosition = route.end - (route.start - car.routePosition);
+    let guard = 0;
+    while (!isTrafficRoutePointClear(car.city, route, car.routePosition, car.laneOffset) && guard < 18) {
+      car.routePosition += car.direction * Math.max(14, route.width * 0.9);
+      while (car.routePosition > route.end) car.routePosition = route.start + (car.routePosition - route.end);
+      while (car.routePosition < route.start) car.routePosition = route.end - (route.start - car.routePosition);
+      guard++;
+      vehicleFixCount++;
+    }
+    const world = cityRoadWorldPoint(car.city, route.vertical, route.offset, car.routePosition, car.laneOffset);
+    const y = cityTrafficVehicleY(car.city, route, car.routePosition);
+    car.rotation = cityTrafficRotation(route, car.direction);
+    if (car.renderedCar) trafficRenderer.setCarTransform(car.renderedCar, world.x, y, world.z, car.rotation);
+    else if (car.group) {
+      car.group.position.set(world.x - car.city.position.x, y, world.z - car.city.position.z);
+      car.group.rotation.y = car.rotation;
+    }
+  }
+
+  function airportVehicleZoneAt(x, z, margin = 0) {
     for (const airport of AIRPORTS) {
-      if (airport.isNightCapable === false || airport.airportCategory === 'HIDDEN_REMOTE_AIRFIELD') continue;
-      const runwayLength = airport.runwayLength || 1320;
-      const runwayWidth = airport.runwayWidth || 98;
+      const local = airportLocal(airport, x, z);
       const size = airport.size || 1;
-      const target = size > 1.05 ? 64 : 42;
-  
-      for (const end of [-1, 1]) {
-        const endPoint = airportWorld(airport, 0, end * (runwayLength / 2 + 620));
-        if (!isNearCityZone(endPoint.x, endPoint.z, 2200)) continue;
-  
-        let placed = 0;
-        const spots = [];
-        for (let i = 0; i < target * 24 && placed < target; i++) {
-          const side = rng() > 0.5 ? 1 : -1;
-          const nearCluster = rng() < 0.68;
-          const along = runwayLength / 2 + (nearCluster ? 260 + Math.pow(rng(), 1.45) * 1020 : 1100 + rng() * 1050);
-          const lateral = runwayWidth * (2.8 + Math.pow(rng(), 0.62) * (nearCluster ? 7.2 : 10.8)) + 55 + rng() * 420;
-          const jitterX = (rng() - 0.5) * runwayWidth * 1.35;
-          const jitterZ = (rng() - 0.5) * 180;
-          const localX = side * lateral + jitterX;
-          const localZ = end * (along + jitterZ);
-          const world = airportWorld(airport, localX, localZ);
-          if (Math.abs(world.x) > MAP_SIZE / 2 - EDGE_OCEAN_WIDTH - 95 || Math.abs(world.z) > MAP_SIZE / 2 - EDGE_OCEAN_WIDTH - 95) continue;
-          if (isWaterSurface(world.x, world.z) || isUrbanAirportExcluded(world.x, world.z, 80) || isNearRunwaySafety(world.x, world.z, 250, 900) || isInRunwayApproach(world.x, world.z, 390, 1450)) continue;
-          if (spots.some(spot => Math.hypot(world.x - spot.x, world.z - spot.z) < 26 + rng() * 18)) continue;
-          const y = terrainHeight(world.x, world.z);
-          if (y < WATER_LEVEL + 3 || y > (airport.elevation || 0) + 110) continue;
-  
-          createSmallHouse(
-            world.x,
-            world.z,
-            houseColors[Math.floor(rng() * houseColors.length)],
-            roofColors[Math.floor(rng() * roofColors.length)],
-            0.14 + rng() * 0.2
-          );
-          spots.push(world);
-          placed++;
-        }
-      }
+      const runwayLength = airport.runwayLength || 1320;
+      const runwayWidth = airport.runwayWidth || 98;
+      const taxiX = runwayWidth * 1.18 + 70 * size;
+      const taxiZ = runwayLength * 0.08;
+      const taxiLength = Math.max(430 * size, runwayLength * 0.45);
+      const apronW = airport.apronWidth || 420 * size;
+      const apronD = airport.apronDepth || 310 * size;
+      const apronX = taxiX + apronW * 0.45;
+      const apronZ = runwayLength * 0.16;
+      if (Math.abs(local.x) < runwayWidth * 0.72 + margin && Math.abs(local.z) < runwayLength / 2 + 150 + margin) return 'runway';
+      if (Math.abs(local.x - taxiX) < Math.max(28, 34 * size) + margin && Math.abs(local.z - taxiZ) < taxiLength / 2 + 70 + margin) return 'taxiway';
+      if (Math.abs(local.x - taxiX * 0.52) < taxiX * 0.62 + margin && Math.abs(local.z + runwayLength * 0.16) < Math.max(38, 42 * size) + margin) return 'taxiway';
+      if (Math.abs(local.x - apronX) < apronW / 2 + 86 + margin && Math.abs(local.z - apronZ) < apronD / 2 + 92 + margin) return 'apron';
+      if (isInAirportPavementLocal(airport, local, 52 + margin)) return 'operational';
     }
+    return null;
   }
 
-  function isNearCityZone(x, z, extra = 0) {
-    for (const zone of CITY_ZONES) {
-      if (Math.hypot(x - zone.x, z - zone.z) < zone.radius + extra) return true;
-    }
-    return false;
+  function isVehicleAirportOperationalBlocked(x, z, margin = 0) {
+    if (airportVehicleZoneAt(x, z, margin)) return true;
+    return isUrbanAirportExcluded(x, z, Math.max(72, margin)) ||
+      isRunwayEndUrbanRoadZone(x, z) ||
+      isInRunwayApproach(x, z, 360 + margin, 1320 + margin * 4);
   }
 
-  function createFarmlandRegions() {
-    createFarmlandRegionsModule({
-      scene,
-      terrainHeight,
-      mulberry32,
-      createTerrainConformingPatch,
-      createSmallHouse,
-      placeStructureGroupOnTerrain,
-      addStructureFoundation,
-      registerStructureFootprint,
-      registerGroundOverlayRect,
-      isRoadWaterBlocked,
-      isInCityCore
-    });
-  }
+  function refreshVehicleIntegrityReport() {
+    const report = urbanIntegrityReport.vehicleReport;
+    report.totalActiveVehicles = trafficCars.length;
+    report.vehiclesOnValidRoads = 0;
+    report.vehiclesOnBridges = 0;
+    report.vehiclesOffRoadCount = 0;
+    report.vehiclesEnteringAirportZones = 0;
+    report.vehiclesOnRunways = 0;
+    report.vehiclesOnTaxiways = 0;
+    report.vehiclesOnAprons = 0;
+    report.vehiclesFixedCount = vehicleFixCount;
 
-  function isInCityCore(x, z) {
-    for (const zone of CITY_ZONES) {
-      if (Math.hypot(x - zone.x, z - zone.z) < zone.radius * 0.72) return true;
-    }
-    return false;
-  }
-
-  function createLowGrassMeadows() {
-    createLowGrassMeadowsModule({
-      scene,
-      terrainHeight,
-      mulberry32,
-      createTerrainConformingPatch,
-      isWaterSurface,
-      isRoadWaterBlocked,
-      isAirportHardSurface,
-      isInCityCore,
-      isStructureFootprintBlocked,
-      doesPatchOverlapStructure,
-      groundOverlayRects
-    });
-  }
-
-  function isAirportHardSurface(x, z, margin = 22) {
-    if (isUrbanAirportExcluded(x, z, margin)) return true;
-    for (const airport of AIRPORTS) {
-      if (isInAirportPavementLocal(airport, airportLocal(airport, x, z), margin)) return true;
-    }
-    return false;
-  }
-
-  function createGroundDetails() {
-    const rng = mulberry32(18371);
-    const detailGroup = new THREE.Group();
-    detailGroup.name = 'near-ground-detail-lod';
-    detailGroup.userData.optionalGroundDetail = true;
-    detailGroup.userData.stableLod = {
-      distanceByQuality: { LOW: 4200, MEDIUM: 6200, HIGH: 8200, ULTRA: 12000 },
-      hysteresis: 0.25,
-      fadeSeconds: 0.55
-    };
-    scene.add(detailGroup);
-    const fieldMaterials = [
-      liftSurfaceMaterial(new THREE.MeshStandardMaterial({ color: 0x7e9f4e, roughness: 0.95 }), -10, -10),
-      liftSurfaceMaterial(new THREE.MeshStandardMaterial({ color: 0x9f9a58, roughness: 0.95 }), -10, -10),
-      liftSurfaceMaterial(new THREE.MeshStandardMaterial({ color: 0x6f8f49, roughness: 0.95 }), -10, -10)
-    ];
-    const rockMaterial = new THREE.MeshStandardMaterial({ color: 0x73776f, roughness: 0.9 });
-    const scrubMaterial = new THREE.MeshStandardMaterial({ color: 0x315f35, roughness: 0.95 });
-  
-    for (const village of VILLAGES) {
-      for (let i = 0; i < 5; i++) {
-        const x = village.x + (rng() - 0.5) * village.radius * 2.2;
-        const z = village.z + (rng() - 0.5) * village.radius * 2.2;
-        if (isWaterSurface(x, z) || isUrbanAirportExcluded(x, z, 70) || isNearRunwaySafety(x, z, 260, 860) || isInRunwayApproach(x, z, 320, 1250)) continue;
-        const width = 82 + rng() * 90;
-        const depth = 54 + rng() * 70;
-        const rotation = rng() * Math.PI;
-        createTerrainConformingPatch(
-          x,
-          z,
-          width,
-          depth,
-          rotation,
-          fieldMaterials[Math.floor(rng() * fieldMaterials.length)],
-          0.9,
-          4,
-          3,
-          1
-        );
-        registerGroundOverlayRect(createPatchRect(x, z, width, depth, rotation));
-      }
-    }
-  
-    for (let i = 0; i < 240; i++) {
-      const x = -MAP_SIZE / 2 + EDGE_OCEAN_WIDTH + rng() * (MAP_SIZE - EDGE_OCEAN_WIDTH * 2);
-      const z = -MAP_SIZE / 2 + EDGE_OCEAN_WIDTH + rng() * (MAP_SIZE - EDGE_OCEAN_WIDTH * 2);
-      if (isWaterSurface(x, z) || isUrbanAirportExcluded(x, z, 70) || isNearRunwaySafety(x, z, 270, 920) || isInRunwayApproach(x, z, 280, 1150)) continue;
-      const y = terrainHeight(x, z);
-      if (y < WATER_LEVEL + 2) continue;
-  
-      if (rng() > 0.58) {
-        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(2.8 + rng() * 5.8, 0), rockMaterial);
-        rock.position.set(x, y + 2.4, z);
-        rock.scale.set(1.2 + rng() * 1.6, 0.7 + rng() * 0.8, 1 + rng() * 1.4);
-        rock.rotation.set(rng() * Math.PI, rng() * Math.PI, rng() * Math.PI);
-        rock.castShadow = false;
-        detailGroup.add(rock);
+    for (const car of trafficCars) {
+      let worldX;
+      let worldZ;
+      if (car.route) {
+        const world = cityRoadWorldPoint(car.city, car.route.vertical, car.route.offset, car.routePosition, car.laneOffset || 0);
+        worldX = world.x;
+        worldZ = world.z;
+      } else if (car.renderedCar) {
+        worldX = car.renderedCar.x;
+        worldZ = car.renderedCar.z;
+      } else if (car.group && car.city) {
+        worldX = car.city.position.x + car.group.position.x;
+        worldZ = car.city.position.z + car.group.position.z;
       } else {
-        const scrub = new THREE.Mesh(new THREE.ConeGeometry(4 + rng() * 4, 7 + rng() * 7, 7), scrubMaterial);
-        scrub.position.set(x, y + 3.8, z);
-        scrub.scale.setScalar(0.65 + rng() * 0.75);
-        scrub.castShadow = false;
-        detailGroup.add(scrub);
+        continue;
       }
+      const zone = airportVehicleZoneAt(worldX, worldZ, 8);
+      if (zone) {
+        report.vehiclesEnteringAirportZones++;
+        if (zone === 'runway') report.vehiclesOnRunways++;
+        if (zone === 'taxiway') report.vehiclesOnTaxiways++;
+        if (zone === 'apron') report.vehiclesOnAprons++;
+      }
+      if (car.route?.bridge) report.vehiclesOnBridges++;
+      if (!car.route?.bridge && isRoadWaterBlocked(worldX, worldZ, 56)) report.vehiclesOffRoadCount++;
+      if (!zone && (car.route?.bridge || !isRoadWaterBlocked(worldX, worldZ, 56))) report.vehiclesOnValidRoads++;
     }
   }
 
-  return {
-    createCity,
-    createVillageRoads,
-    createIslandSettlements,
-    createMountainHamlets,
-    createForests,
-    createWoodlandCabins,
-    createVillages,
-    createAirfieldLowHomes,
-    createRunwayEndScatterHomes,
-    createFarmlandRegions,
-    createGroundDetails,
-    createLowGrassMeadows,
-    createUrbanInfrastructureReport,
-    updateTraffic
-  };
-}
+  function createCar(parent, x, y, z, rotation, color) {
+    const group = new THREE.Group();
+    group.position.set(x, y, z);
+    group.rotation.y = rotation;
+    group.userData.diagnosticType = 'vehicle';
+    group.userData.diagnosticCount = 1;
+    parent.add(group);
+
+    const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.48, metalness: 0.08 });
+    const glassMaterial = new THREE.MeshStandardMaterial({ color: 0x9ed8f3, roughness: 0.18, metalness: 0.02 });
+    const tireMaterial = new THREE.MeshStandardMaterial({ color: 0x111820, roughness: 0.72 });
+
+    const body = new THREE.Mesh(new THREE.BoxGeometry(6.2, 1.65, 10.2), bodyMaterial);
+    body.position.y = 0.9;
+    body.castShadow = false;
+    group.add(body);
+
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(4.6, 1.45, 4.4), glassMaterial);
+    cabin.position.set(0, 2.1, -0.7);
+    cabin.castShadow = false;
+    group.add(cabin);
+
+    for (const wheel of [[-3.1, 0.45, -3.3], [3.1, 0.45, -3.3], [-3.1, 0.45, 3.3], [3.1, 0.45, 3.3]]) {
+      const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.52, 12), tireMaterial);
+      tire.rotation.z = Math.PI / 2;
+      tire.position.set(wheel[0], wheel[1], wheel[2]);
+      group.add(tire);
+    }
+
+    return group;
+  }
+
+  function createTrafficRenderer() {
+    const bodyGeometry = new THREE.BoxGeometry(6.2, 1.65, 10.2);
+    const cabinGeometry = new THREE.BoxGeometry(4.6, 1.45, 4.4);
+    const tireGeometry = new THREE.CylinderGeometry(0.72, 0.72, 0.52, 10);
+    const bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.48, metalness: 0.08, vertexColors: true });
+    const cabinMaterial = new THREE.MeshStandardMaterial({ color: 0x9ed8f3, roughness: 0.18, metalness: 0.02 });
+    const tireMaterial = new THREE.MeshStandardMaterial({ color: 0x111820, roughness: 0.72 });
+    const bodyMesh = new THREE.InstancedMesh(bodyGeometry, bodyMaterial, TRAFFIC_CAR_CAPACITY);
+    const cabinMesh = new THREE.InstancedMesh(cabinGeometry, cabinMaterial, TRAFFIC_CAR_CAPACITY);
+    const tireMesh = new THREE.InstancedMesh(tireGeometry, tireMaterial, TRAFFIC_CAR_CAPACITY * 4);
+    const colorHelper = new THREE.Color();
+    const carDummy = new THREE.Object3D();
+    let count = 0;
+    let dirty = false;
+
+    for (const mesh of [bodyMesh, cabinMesh, tireMesh]) {
+      mesh.count = 0;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      mesh.frustumCulled = true;
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      scene.add(mesh);
+    }
+
+    bodyMesh.userData.diagnosticType = 'vehicle';
+    bodyMesh.userData.diagnosticCount = 0;
+
+    function addCar(x, y, z, rotation, color) {
+      if (count >= TRAFFIC_CAR_CAPACITY) return null;
+      const index = count++;
+      const car = { index, x, y, z, rotation };
+      bodyMesh.count = count;
+      cabinMesh.count = count;
+      tireMesh.count = count * 4;
+      bodyMesh.setColorAt(index, colorHelper.setHex(color));
+      bodyMesh.userData.diagnosticCount = count;
+      setCarTransform(car, x, y, z, rotation);
+      bodyMesh.instanceColor.needsUpdate = true;
+      return car;
+    }
+
+    function setCarTransform(car, x, y, z, rotation) {
+      car.x = x;
+      car.y = y;
+      car.z = z;
+      car.rotation = rotation;
+      setBodyMatrix(car.index, x, y + 0.9, z, rotation);
+      setCabinMatrix(car.index, x, y, z, rotation);
+      setTireMatrices(car.index, x, y, z, rotation);
+      dirty = true;
+    }
+
+    function setBodyMatrix(index, x, y, z, rotation) {
+      carDummy.position.set(x, y, z);
+      carDummy.rotation.set(0, rotation, 0);
+      carDummy.scale.set(1, 1, 1);
+      carDummy.updateMatrix();
+      bodyMesh.setMatrixAt(index, carDummy.matrix);
+    }
+
+    function setCabinMatrix(index, x, y, z, rotation) {
+      const p = rotatedTrafficOffset(x, z, 0, -0.7, rotation);
+      carDummy.position.set(p.x, y + 2.1, p.z);
+      carDummy.rotation.set(0, rotation, 0);
+      carDummy.scale.set(1, 1, 1);
+      carDummy.updateMatrix();
+      cabinMesh.setMatrixAt(index, carDummy.matrix);
+    }
+
+    function setTireMatrices(index, x, y, z, rotation) {
+      const wheels = [[-3.1, -3.3], [3.1, -3.3], [-3.1, 3.3], [3.1, 3.3]];
+      for (let i = 0; i < wheels.length; i++) {
+        const p = rotatedTrafficOffset(x, z, wheels[i][0], wheels[i][1], rotation);
+        carDummy.position.set(p.x, y + 0.45, p.z);
+        carDummy.rotation.set(0, rotation, Math.PI / 2);
+        carDummy.scale.set(1, 1, 1);
+        carDummy.updateMatrix();
+        tireMesh.setMatrixAt(index * 4 + i, carDummy.matrix);
+      }
+    }
+
+    function flush() {
+      if (!dirty) return;
+      bodyMesh.instanceMatrix.needsUpdate = true;
+      cabinMesh.instanceMatrix.needsUpdate = true;
+      tireMesh.instanceMatrix.needsUpdate = true;
+      dirty = false;
+    }
+
+    return { addCar, setCarTransform, flush };
+  }
+
+  function rotatedTrafficOffset(x, z, localX, localZ, rotation) {
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    return {
+      x: x + localX * cos + localZ * sin,
+      z: z - localX * sin + localZ * cos
+    };
+  }
+
+  function updateTraffic(dt, qualityPreset = null) {
+    trafficUpdateDebt += dt;
+    const interval = qualityPreset?.trafficUpdateInterval ?? 0.04;
+    if (trafficUpdateDebt < interval) return;
+    const stepDt = trafficUpdateDebt;
+    trafficUpdateDebt = 0;
+    for (const car of trafficCars) {
+      if (car.route) {
+        advanceTrafficCarOnRoute(car, stepDt);
+        continue;
+      }
+      if (car.renderedCar) {
+        if (car.axis === 'x') car.localX += car.direction * car.speed * stepDt;
+        else car.localZ += car.direction * car.speed * stepDt;
+        if (car.axis === 'x' && car.direction > 0 && car.localX > car.max) car.localX = car.min;
+        if (car.axis === 'x' && car.direction < 0 && car.localX < car.min) car.localX = car.max;
+        if (car.axis === 'z' && car.direction > 0 && car.localZ > car.max) car.localZ = car.min;
+        if (car.axis === 'z' && car.direction < 0 && car.localZ < car.min) car.localZ = car.max;
+      } else {
+        car.group.position[car.axis] += car.direction * car.speed * stepDt;
+        if (car.direction > 0 && car.group.position[car.axis] > car.max) car.group.position[car.axis] = car.min;
+        if (car.direction < 0 && car.group.position[car.axis] < car.min) car.group.position[car.axis] = car.max;
+      }
+
+      let worldX = car.renderedCar ? car.city.position.x + car.localX : car.city.position.x + car.group.position.x;
+      let worldZ = car.renderedCar ? car.city.position.z + car.localZ : car.city.position.z + car.group.position.z;
+      let guard = 0;
+      while ((isRoadWaterBlocked(worldX, worldZ, 150) || isUrbanAirportExcluded(worldX, worldZ, 40) || isRunwayEndUrbanRoadZone(worldX, worldZ)) && guard < 28) {
+        if (car.renderedCar) {
+          if (car.axis === 'x') car.localX += car.direction * 44;
+          else car.localZ += car.direction * 44;
+          if (car.axis === 'x' && car.direction > 0 && car.localX > car.max) car.localX = car.min;
+          if (car.axis === 'x' && car.direction < 0 && car.localX < car.min) car.localX = car.max;
+          if (car.axis === 'z' && car.direction > 0 && car.localZ > car.max) car.localZ = car.min;
+          if (car.axis === 'z' && car.direction < 0 && car.localZ < car.min) car.localZ = car.max;
+          worldX = car.city.position.x + car.localX;
+          worldZ = car.city.position.z + car.localZ;
+        } else {
+          car.group.position[car.axis] += car.direction * 44;
+          if (car.direction > 0 && car.group.position[car.axis] > car.max) car.group.position[car.axis] = car.min;
+          if (car.direction < 0 && car.group.position[car.axis] < car.min) car.group.position[car.axis] = car.max;
+          worldX = car.city.position.x + car.group.position.x;
+          worldZ = car.city.position.z + car.group.position.z;
+        }
+        guard++;
+      }
+      const y = terrainHeight(worldX, worldZ) + VILLAGE_VEHICLE_TERRAIN_Y_OFFSET;
+      if (car.renderedCar) trafficRenderer.setCarTransform(car.renderedCar, worldX, y, worldZ, car.rotation);
+      else car.group.position.y = y;
+    }
+    trafficRenderer.flush();
+    refreshVehicleIntegrityReport();
+  }

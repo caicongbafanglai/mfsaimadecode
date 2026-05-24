@@ -1191,7 +1191,10 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
         this.state = nextState;
         this.eventId = eventId || '';
         this.isParked = nextState === 'PARKED' || nextState === 'PRE_ACTIVATE';
-        this.isAirborne = nextState === 'TAKING_OFF' || nextState === 'AIRBORNE' || nextState === 'DEPARTING';
+        this.isAirborne = nextState === 'TAKING_OFF' ||
+          nextState === 'AIRBORNE' ||
+          nextState === 'FOLLOWING_PLAYER' ||
+          nextState === 'DEPARTING';
         group.userData.hiddenUfoState = nextState;
         group.userData.ufoState = nextState;
         group.userData.ufoEventId = this.eventId;
@@ -1257,8 +1260,9 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
       activeEventId = payload.ufoEventId || '';
       const glowScale = hiddenUfoGlowScale(nightFactor);
       const requestedIndex = Number.isInteger(payload.ufoIndex) ? payload.ufoIndex : -1;
+      const strictIslandSelection = payload.mode === 'ISLAND_EVENT' || payload.eventCategory === 'NOTHING_THERE_ISLAND_EVENT';
       active = saucers.find(ufo => ufo.apronSlotId === requestedIndex && ufo.state === 'PARKED') ||
-        saucers.find(ufo => ufo.state === 'PARKED') ||
+        (strictIslandSelection ? null : saucers.find(ufo => ufo.state === 'PARKED')) ||
         null;
       if (!active) {
         updateReport();
@@ -1297,11 +1301,17 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
       }
 
       detachForFlight(ufo);
-      ufo.setState(phase === 'FAST_DEPARTURE' ? 'DEPARTING' : phase === 'VERTICAL_TAKEOFF' ? 'TAKING_OFF' : 'AIRBORNE', payload.ufoEventId);
+      ufo.setState(phase === 'FAST_DEPARTURE'
+        ? 'DEPARTING'
+        : phase === 'VERTICAL_TAKEOFF'
+          ? 'TAKING_OFF'
+          : phase === 'TRACK_PLAYER' || phase === 'WORLD_TRACKING'
+            ? 'FOLLOWING_PLAYER'
+            : 'AIRBORNE', payload.ufoEventId);
       ufo.setVisible(true);
       ufo.setBlueGlowEnabled(glowScale > 0.02);
       ufo.setAirborneTransform(worldPosition);
-      ufo.group.rotation.y += dt * (phase === 'FAST_DEPARTURE' ? 1.2 : 0.24);
+      orientHiddenUfoTowardTarget(ufo, payload, worldPosition, dt, phase);
       ufo.setGlowIntensity((0.74 + glowIntensity * 0.68) * glowScale);
       updateReport();
       return ufo;
@@ -1339,12 +1349,31 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
       return THREE.MathUtils.smoothstep(night, 0.08, 0.36);
     }
 
+    function orientHiddenUfoTowardTarget(ufo, payload, worldPosition, dt, phase) {
+      const target = (payload.targetPlayers || [])
+        .find(item => item.playerId === payload.targetPlayerId || item.playerId === payload.triggerPlayerId) ||
+        payload.targetPlayers?.[0] ||
+        null;
+      const targetPosition = target?.position;
+      if (targetPosition && phase !== 'FAST_DEPARTURE') {
+        const dx = (targetPosition.x || 0) - worldPosition.x;
+        const dz = (targetPosition.z || 0) - worldPosition.z;
+        if (Math.hypot(dx, dz) > 1) {
+          const targetYaw = Math.atan2(dx, dz);
+          const delta = Math.atan2(Math.sin(targetYaw - ufo.group.rotation.y), Math.cos(targetYaw - ufo.group.rotation.y));
+          ufo.group.rotation.y += delta * (1 - Math.exp(-dt * 1.25));
+          return;
+        }
+      }
+      ufo.group.rotation.y += dt * (phase === 'FAST_DEPARTURE' ? 1.2 : 0.24);
+    }
+
     function updateReport() {
       report = hiddenUfoManagerReport();
       window.MHFS_HIDDEN_APRON_UFO_REPORT = report;
     }
 
-    function hiddenUfoManagerReport() {
+      function hiddenUfoManagerReport() {
       const parkedVisible = countParkedUfos();
       const airborne = countAirborneUfos();
       const lost = saucers.filter(ufo => ufo.state === 'LOST').length;
@@ -1357,7 +1386,7 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
         totalManagedUfos: total,
         activeIndex: active?.apronSlotId ?? null,
         activeState: active?.state || 'NONE',
-        selectedFromApronSix: active ? 'PASS' : 'WAITING',
+        selectedFromApronSix: active ? (active.apronSlotId === 5 ? 'PASS' : 'FAIL') : 'WAITING',
         apronCountAfterTakeoff: active && active.state !== 'PRE_ACTIVATE' ? parkedVisible : total,
         noExtraCopiedUfo: total === 6 ? 'PASS' : 'FAIL',
         groundAirCountConsistent: parkedVisible + airborne + lost <= total ? 'PASS' : 'FAIL',
@@ -1462,7 +1491,7 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
       minVisibleDistance: AIRPORT_NIGHT_VISIBILITY_METERS.building
     });
     group.add(pole);
-  
+
     const cabin = new THREE.Mesh(
       new THREE.BoxGeometry(34 * scale, 20 * scale, 34 * scale),
       new THREE.MeshStandardMaterial({ color: 0x7ca9c6, roughness: 0.3, metalness: 0.08 })
@@ -1480,21 +1509,21 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
   function createApronMarkings(group, layout) {
     const yellow = liftSurfaceMaterial(new THREE.MeshStandardMaterial({ color: 0xffd34d, roughness: 0.55, depthWrite: true }), -30, -30);
     const white = liftSurfaceMaterial(new THREE.MeshStandardMaterial({ color: 0xf5f7f8, roughness: 0.44, depthWrite: true }), -32, -32);
-  
+
     const centerLine = new THREE.Mesh(new THREE.BoxGeometry(3, 0.14, layout.taxiLength * 0.9), yellow);
     centerLine.position.set(layout.taxiX, 0.88, layout.taxiZ);
     group.add(centerLine);
-  
+
     const apronLine = new THREE.Mesh(new THREE.BoxGeometry(layout.apronW * 0.74, 0.14, 3), yellow);
     apronLine.position.set(layout.apronX, 0.9, layout.apronZ);
     group.add(apronLine);
-  
+
     const standCount = layout.size > 1.05 ? 5 : 4;
     for (let i = 0; i < standCount; i++) {
       const x = layout.apronX - layout.apronW * 0.34 + i * (layout.apronW * 0.68 / Math.max(1, standCount - 1));
       const stand = new THREE.Group();
       stand.position.set(x, 0.92, layout.apronZ + layout.apronD * 0.2);
-  
+
       const stem = new THREE.Mesh(new THREE.BoxGeometry(3, 0.12, layout.apronD * 0.28), yellow);
       stem.position.z = -layout.apronD * 0.05;
       stem.renderOrder = 35;
@@ -1503,7 +1532,7 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
       bar.position.z = layout.apronD * 0.1;
       bar.renderOrder = 35;
       stand.add(bar);
-  
+
       const stop = new THREE.Mesh(new THREE.BoxGeometry(Math.max(30, 34 * layout.size), 0.13, 4), white);
       stop.position.z = -layout.apronD * 0.18;
       stop.renderOrder = 35;

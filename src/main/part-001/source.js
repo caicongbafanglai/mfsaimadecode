@@ -134,6 +134,10 @@ const SPEED_CALLOUTS = [
 ];
 const urlParams = new URLSearchParams(window.location.search);
 const enableConsoleDiagnostics = urlParams.has('debug') || urlParams.get('diagnostics') === '1';
+const debugHelpersEnabled = urlParams.get('debugHelpers') === '1' ||
+  urlParams.get('debugHelpers') === 'true' ||
+  urlParams.get('helpers') === '1';
+window.MHFS_DEBUG_HELPERS_ENABLED = debugHelpersEnabled;
 let baseRenderQuality = resolveRenderQualityPreset(
   urlParams.get('quality') || window.localStorage?.getItem('flight-render-quality'),
   selectDefaultRenderQuality(browserInfo) || DEFAULT_RENDER_QUALITY
@@ -349,7 +353,7 @@ const groundWorld = createGroundWorld({ scene, trafficCars, terrainHeight, mulbe
 const lights = initLights(scene, renderQuality);
 const skySystem = createSky(scene);
 createTerrain({ scene, waterSystem, quality: renderQuality });
-createDistantWorldVisuals({ scene, terrainHeight, mulberry32, quality: renderQuality });
+createDistantWorldVisuals({ scene, terrainHeight, mulberry32, quality: renderQuality, debugHelpersEnabled });
 markWorldLoaded(true);
 const boatSystem = createBoatSystem({ scene, mulberry32 });
 boatSystem.createBoats(renderQuality.denseScenery
@@ -422,6 +426,7 @@ startWorldBuildQueue().then(() => {
   updateAirportPriorityLoading(0, true);
   applyUltraSceneQuality(scene, renderer, renderQuality);
   enforceRealLightBudget(scene, renderQuality, camera);
+  cleanupMapGuideLines();
   runWorldIntegrityReports('startup');
   window.MHFS_BOOT?.setStep?.('Starting game loop...');
   requestAnimationFrame(() => ui.loading.classList.add('hidden'));
@@ -489,6 +494,7 @@ function startWorldBuildQueue() {
 
       applyUltraSceneQuality(scene, renderer, renderQuality);
       enforceRealLightBudget(scene, renderQuality, camera);
+      cleanupMapGuideLines();
       detailCuller = createDetailCuller(aircraft.group);
       if (!criticalResolved) resolve();
     }

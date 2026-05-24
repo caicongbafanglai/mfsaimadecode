@@ -388,11 +388,11 @@ function createDetailTexture() {
 function normalizeIslandDurations(payload) {
   const durations = payload.durations || {};
   return {
-    preGlowMs: durations.preGlowMs || 1800,
-    takeoffMs: durations.takeoffMs || 5200,
+    preGlowMs: durations.preGlowMs || 3200,
+    takeoffMs: durations.takeoffMs || 11000,
     hoverMs: durations.hoverMs || 5200,
-    trackMs: durations.trackMs || 2300,
-    departMs: durations.departMs || 1400,
+    trackMs: durations.trackMs || 90000,
+    departMs: durations.departMs || 5200,
     lostMs: durations.lostMs || CONTACT_LOST_HOLD_MS
   };
 }
@@ -468,6 +468,24 @@ function sideEncounterLegProgress(leg, elapsedMs) {
   return THREE.MathUtils.clamp((elapsedMs - start) / (end - start), 0, 1);
 }
 
+function islandFollowLeg(payload, durationMs) {
+  const leg = payload.sideEncounter?.legs?.[0];
+  if (leg) return leg;
+  const side = (payload.ufoIndex || 0) % 2 === 0 ? -1 : 1;
+  return {
+    playerId: payload.targetPlayerId || payload.triggerPlayerId,
+    startMs: 0,
+    endMs: Math.max(45000, finite(durationMs, 60000)),
+    startOffset: { rightM: side * 860, forwardM: 1350, upM: 420 },
+    endOffset: { rightM: side * 680, forwardM: 1050, upM: 360 },
+    bobPhase: 0.4,
+    bobMeters: 7,
+    driftMeters: side * 44,
+    microShiftMeters: -side * 70,
+    microShiftPeriodMs: 6800
+  };
+}
+
 function setSideEncounterRelativePosition(target, targetPosition, headingDeg, leg, progress, nowMs) {
   const startOffset = leg?.startOffset || { rightM: -850, forwardM: 300, upM: 260 };
   const endOffset = leg?.endOffset || startOffset;
@@ -530,25 +548,60 @@ function sideEncounterRelativeComponents(position, targetPosition, headingDeg) {
 
 function createDebugIslandPayload(nowMs) {
   const spawn = islandFallbackSpawnPoint();
+  const player = window.MHFS_DEBUG_STATE?.position || { x: spawn.x + 1200, y: 2500, z: spawn.z - 900 };
+  const heading = window.MHFS_DEBUG_STATE?.heading || 45;
   return {
     ufoEventId: `DEBUG-ISLAND-${Math.floor(nowMs / 1000)}`,
     mode: UFO_EVENT_MODES.ISLAND_EVENT,
     state: UFO_EVENT_STATES.PRE_GLOW,
-    ufoIndex: 0,
+    ufoIndex: 5,
     apronInitialUfoCount: 6,
     apronRemainingAfterTakeoff: 5,
     startTime: nowMs,
-    endTime: nowMs + 18000,
+    endTime: nowMs + 118000,
     spawnPoint: spawn,
     targetAltitudeFt: 7200,
-    departureSpeed: 1400,
+    departureSpeed: 420,
+    departureSpeedKts: 999,
     departureDirection: { x: 0.86, z: -0.5 },
+    targetPlayerId: 'debug-player',
+    targetPlayerIds: ['debug-player'],
+    targetPlayers: [{
+      playerId: 'debug-player',
+      position: { x: player.x, y: player.y, z: player.z },
+      heading,
+      speed: 220,
+      altitude: Math.round(player.y * M_TO_FT),
+      altitudeAGL: Math.round(player.y * M_TO_FT)
+    }],
+    followDurationMs: 90000,
+    sideEncounter: {
+      speedMatch: true,
+      visibleConeDeg: 120,
+      minimumVisibleDurationMs: 45000,
+      legs: [{
+        playerId: 'debug-player',
+        startMs: 0,
+        endMs: 90000,
+        startOffset: { rightM: 860, forwardM: 1300, upM: 420 },
+        endOffset: { rightM: 680, forwardM: 1050, upM: 360 },
+        bobPhase: 0.4,
+        bobMeters: 7,
+        driftMeters: 44,
+        microShiftMeters: -70,
+        microShiftPeriodMs: 6800
+      }]
+    },
+    speedKts: 220,
+    speedOffsetKts: 0,
+    visualContact: false,
+    signalIntermittent: true,
     durations: {
-      preGlowMs: 1600,
-      takeoffMs: 4200,
+      preGlowMs: 2800,
+      takeoffMs: 11000,
       hoverMs: 3800,
-      trackMs: 2200,
-      departMs: 1400,
+      trackMs: 90000,
+      departMs: 5200,
       lostMs: CONTACT_LOST_HOLD_MS
     }
   };

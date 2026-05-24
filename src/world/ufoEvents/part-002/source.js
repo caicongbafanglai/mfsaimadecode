@@ -5,8 +5,7 @@
 
     const contactPosition = lastContactPosition || { x: position.x, y: position.y, z: position.z };
     const hover = phase === UFO_EVENT_STATES.HOVER ||
-      phase === UFO_EVENT_STATES.TRACK_PLAYER ||
-      phase === UFO_EVENT_STATES.WORLD_TRACKING;
+      ((phase === UFO_EVENT_STATES.TRACK_PLAYER || phase === UFO_EVENT_STATES.WORLD_TRACKING) && Math.abs(speedKts || 0) < 5);
     const fast = phase === UFO_EVENT_STATES.FAST_DEPARTURE ||
       speedKts >= 999;
     const distance = Math.hypot(contactPosition.x - state.position.x, contactPosition.z - state.position.z);
@@ -27,7 +26,10 @@
       visualContact: Boolean(payload.visualContact) && !lost,
       signalOffset: Boolean(payload.signalOffset) && !lost,
       signalDegraded: Boolean(payload.signalIntermittent) || distance < 9000 || ((payload.mode === UFO_EVENT_MODES.WORLD_ROAMING || payload.mode === UFO_EVENT_MODES.NIGHT_ENCOUNTER) && distance > 52000),
-      intermittent: payload.mode === UFO_EVENT_MODES.WORLD_ROAMING || payload.mode === UFO_EVENT_MODES.NIGHT_ENCOUNTER || payload.mode === UFO_EVENT_MODES.PLAYER_SIDE_ENCOUNTER,
+      intermittent: payload.mode === UFO_EVENT_MODES.WORLD_ROAMING ||
+        payload.mode === UFO_EVENT_MODES.NIGHT_ENCOUNTER ||
+        payload.mode === UFO_EVENT_MODES.PLAYER_SIDE_ENCOUNTER ||
+        payload.mode === UFO_EVENT_MODES.ISLAND_EVENT,
       updatedAtMs: now
     };
   }
@@ -62,6 +64,11 @@
 
   function updateReport(payload, phase, visible, coreVisible, managedIslandUfo = null) {
     const apronReport = managedIslandUfo?.getReport?.() || null;
+    const islandEvent = payload?.mode === UFO_EVENT_MODES.ISLAND_EVENT;
+    const followDuration = payload?.followDurationMs || payload?.durations?.trackMs || 0;
+    const currentSpeed = state.ufoContact?.speed;
+    const currentVisual = Boolean(state.ufoContact?.visualContact);
+    const currentBehind = Boolean(state.ufoContact?.signalOffset);
     report = {
       active: Boolean(payload && visible),
       eventId: payload?.ufoEventId || '',
@@ -76,6 +83,18 @@
       sideEncounterForwardVisible: payload?.mode === UFO_EVENT_MODES.PLAYER_SIDE_ENCOUNTER ? 'PASS' : 'READY',
       sideEncounterMinimumVisible30s: payload?.mode === UFO_EVENT_MODES.PLAYER_SIDE_ENCOUNTER ? 'PASS' : 'READY',
       sideEncounterVisibilityRecovery: payload?.mode === UFO_EVENT_MODES.PLAYER_SIDE_ENCOUNTER ? 'PASS' : 'READY',
+      islandUfoSixSelectedForTakeoff: islandEvent
+        ? (apronReport?.activeIndex === 5 ? 'PASS' : 'WAITING')
+        : 'READY',
+      islandApronCountAfterTakeoff: apronReport?.apronCountAfterTakeoff ?? 'WAITING',
+      islandNoDuplicatedSeventhUfo: apronReport?.noExtraCopiedUfo || 'WAITING',
+      islandFollowDurationExtended: islandEvent ? (followDuration >= 60000 ? 'PASS' : 'FAIL') : 'READY',
+      islandMinimumVisible45s: islandEvent ? (payload?.sideEncounter?.minimumVisibleDurationMs >= 45000 ? 'PASS' : 'FAIL') : 'READY',
+      islandUfoVisibleInPlayerView: islandEvent ? (currentVisual ? 'PASS' : phase === UFO_EVENT_STATES.TRACK_PLAYER ? 'RECOVERING' : 'WAITING') : 'READY',
+      islandUfoNotBehindPlayer: islandEvent ? (!currentBehind ? 'PASS' : 'RECOVERING') : 'READY',
+      islandUfoSpeedReduced: islandEvent
+        ? (Number.isFinite(currentSpeed) && currentSpeed > 0 && currentSpeed < 420 ? 'PASS' : phase === UFO_EVENT_STATES.TRACK_PLAYER ? 'WAITING' : 'READY')
+        : 'READY',
       ufoIs3D: 'PASS',
       ufoTrue3D: 'PASS',
       ufoHasVolumeAndThickness: 'PASS',

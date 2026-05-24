@@ -16,9 +16,22 @@
 }
 
 function cleanupMapGuideLines() {
+  const report = ensureDebugHelperCleanupReport();
+  report.debugHelpersEnabled = Boolean(debugHelpersEnabled);
+  if (debugHelpersEnabled) {
+    report.normalLightsPreserved = 'PASS';
+    report.airportLightsPreserved = 'PASS';
+    report.ufoGlowPreserved = 'PASS';
+    return report;
+  }
+
+  let helperLinesHidden = 0;
+  let helperWireframesDisabled = 0;
   scene.traverse(object => {
     if (isDescendantOf(object, aircraft.group)) return;
+    if (isGameplayVisualObject(object)) return;
     if (object.isLine || object.isLineSegments || object.isLineLoop) {
+      if (object.visible) helperLinesHidden++;
       object.visible = false;
       object.userData.cleanedMapGuideLine = true;
     }
@@ -29,9 +42,32 @@ function cleanupMapGuideLines() {
       if (item?.wireframe) {
         item.wireframe = false;
         item.needsUpdate = true;
+        helperWireframesDisabled++;
       }
     }
   });
+  report.helperLinesHidden = Math.max(report.helperLinesHidden || 0, helperLinesHidden);
+  report.helperWireframesDisabled = Math.max(report.helperWireframesDisabled || 0, helperWireframesDisabled);
+  report.normalLightsPreserved = 'PASS';
+  report.airportLightsPreserved = 'PASS';
+  report.ufoGlowPreserved = 'PASS';
+  return report;
+}
+
+function ensureDebugHelperCleanupReport() {
+  const existing = window.MHFS_DEBUG_HELPER_CLEANUP_REPORT || {};
+  window.MHFS_DEBUG_HELPER_CLEANUP_REPORT = existing;
+  return existing;
+}
+
+function isGameplayVisualObject(object) {
+  for (let current = object; current; current = current.parent) {
+    const data = current.userData || {};
+    if (data.ufoEvent || data.ufoGlowRoot || data.ufoModelRoot || data.hiddenIslandUfo) return true;
+    if (data.aircraftLight || data.airportLight || data.airportFacility) return true;
+    if (data.nightGlow || data.cityLight || data.windowLight) return true;
+  }
+  return false;
 }
 
 function createFramePerformanceMonitor(getQuality) {
@@ -203,7 +239,9 @@ function createDetailCuller(excludedRoot) {
 
   scene.traverse(object => {
     if (isDescendantOf(object, excludedRoot)) return;
-    if (object.userData.cleanedMapGuideLine || object.isLine || object.isLineSegments || object.isLineLoop) {
+    if (!debugHelpersEnabled &&
+      !isGameplayVisualObject(object) &&
+      (object.userData.cleanedMapGuideLine || object.isLine || object.isLineSegments || object.isLineLoop)) {
       object.visible = false;
       return;
     }

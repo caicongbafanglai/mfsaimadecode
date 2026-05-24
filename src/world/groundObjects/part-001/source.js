@@ -55,6 +55,7 @@ const CITY_BRIDGE_EDGE_HEIGHT = 2.8;
 const CITY_BRIDGE_MIN_RAMP_LENGTH = 92;
 const VEHICLE_ROAD_SURFACE_CLEARANCE = 0.28;
 const VILLAGE_VEHICLE_TERRAIN_Y_OFFSET = 1.38;
+const VEHICLE_COLOR_RECENT_WINDOW = 3;
 const VEHICLE_COLOR_ORDER = [
   'white',
   'black',
@@ -127,7 +128,7 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
   const groundOverlayRects = [];
   let trafficUpdateDebt = 0;
   let vehicleFixCount = 0;
-  const vehicleLastColorByArea = new Map();
+  const vehicleRecentColorsByArea = new Map();
   const houseWindowGeometry = new THREE.PlaneGeometry(4.2, 3.2);
   const houseWindowGlowGeometry = new THREE.PlaneGeometry(8.6, 6.2);
   const buildingWindowGeometry = new THREE.PlaneGeometry(1, 1);
@@ -317,12 +318,14 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
 
   function chooseVehicleColor(profileName, rng, areaKey = 'global') {
     const profile = VEHICLE_COLOR_PROFILES[profileName] || VEHICLE_COLOR_PROFILES.city;
-    const last = vehicleLastColorByArea.get(areaKey);
+    const recent = vehicleRecentColorsByArea.get(areaKey) || [];
     let entry = weightedVehicleColor(profile, rng);
-    for (let attempt = 0; attempt < 4 && entry.name === last && profile.length > 1; attempt++) {
+    for (let attempt = 0; attempt < 8 && recent.includes(entry.name) && profile.length > VEHICLE_COLOR_RECENT_WINDOW; attempt++) {
       entry = weightedVehicleColor(profile, rng);
     }
-    vehicleLastColorByArea.set(areaKey, entry.name);
+    recent.push(entry.name);
+    while (recent.length > VEHICLE_COLOR_RECENT_WINDOW) recent.shift();
+    vehicleRecentColorsByArea.set(areaKey, recent);
     recordVehicleColor(entry.name);
     return entry.hex;
   }
@@ -752,3 +755,11 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
     const pier = new THREE.Mesh(
       new THREE.BoxGeometry(12, 1.2, 92),
       new THREE.MeshStandardMaterial({ color: 0x8a643f, roughness: 0.82 })
+
+    );
+    pier.position.set(x, y, z);
+    pier.rotation.y = heading;
+    pier.castShadow = true;
+    pier.receiveShadow = true;
+    scene.add(pier);
+  }
