@@ -423,15 +423,17 @@ ui.thrustTrackRight.addEventListener('pointerdown', event => beginThrottleDrag(e
 renderer.domElement.tabIndex = 0;
 renderer.domElement.focus();
 
-startWorldBuildQueue().then(() => {
+const worldBuildReady = startWorldBuildQueue();
+window.MHFS_BOOT?.setStep?.('Starting game loop...');
+requestAnimationFrame(() => ui.loading.classList.add('hidden'));
+animate();
+
+worldBuildReady.then(() => {
   updateAirportPriorityLoading(0, true);
   applyUltraSceneQuality(scene, renderer, renderQuality);
   enforceRealLightBudget(scene, renderQuality, camera);
   cleanupMapGuideLines();
   runWorldIntegrityReports('startup');
-  window.MHFS_BOOT?.setStep?.('Starting game loop...');
-  requestAnimationFrame(() => ui.loading.classList.add('hidden'));
-  animate();
 });
 
 function startWorldBuildQueue() {

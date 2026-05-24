@@ -10,6 +10,7 @@ const DAY_DURATION_SECONDS = 600;
 const STALE_TIMEOUT_MS = 3000;
 const PLAYER_TIMEOUT_MS = 10000;
 const MAX_BODY_BYTES = 64 * 1024;
+const GAME_PREFIX = '/game';
 const players = new Map();
 let nextPlayerNumber = 1;
 const ufoSchedulerSystem = createUfoScheduler({ getOnlinePlayers: onlinePlayers });
@@ -23,7 +24,7 @@ const mimeTypes = new Map([
   ['.jpg', 'image/jpeg'],
   ['.jpeg', 'image/jpeg'],
   ['.svg', 'image/svg+xml; charset=utf-8'],
-  ['.ico', 'image/svg+xml; charset=utf-8'],
+  ['.ico', 'image/x-icon'],
   ['.webp', 'image/webp'],
   ['.hdr', 'application/octet-stream']
 ]);
@@ -31,7 +32,12 @@ const mimeTypes = new Map([
 const server = http.createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
-    const pathname = url.pathname;
+    if ((request.method === 'GET' || request.method === 'HEAD') && url.pathname === GAME_PREFIX) {
+      response.writeHead(301, { Location: `${GAME_PREFIX}/${url.search}` });
+      response.end();
+      return;
+    }
+    const pathname = publicPath(url.pathname);
     if (request.method === 'GET' && pathname === '/favicon.ico') {
       return sendFavicon(response);
     }
@@ -55,7 +61,7 @@ const server = http.createServer(async (request, response) => {
       if (payload?.playerId) players.delete(payload.playerId);
       return sendJson(response, { ok: true, ...serverTimePayload() });
     }
-    return serveStatic(request, response);
+    return serveStatic(request, response, pathname);
   } catch (error) {
     response.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
     response.end(JSON.stringify({ error: error.message || 'server error' }));
@@ -268,9 +274,9 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
-function serveStatic(request, response) {
+function serveStatic(request, response, publicPathname = null) {
   const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
-  const pathname = decodeURIComponent(url.pathname);
+  const pathname = decodeURIComponent(publicPathname || url.pathname);
   const safePath = normalize(pathname).replace(/^(\.\.[/\\])+/, '');
   let filePath = join(ROOT, safePath === '/' ? 'index.html' : safePath);
   if (!filePath.startsWith(ROOT)) {
@@ -300,6 +306,12 @@ function serveStatic(request, response) {
     'Cache-Control': 'no-store'
   });
   createReadStream(filePath).pipe(response);
+}
+
+function publicPath(pathname) {
+  if (pathname === GAME_PREFIX) return '/';
+  if (pathname.startsWith(`${GAME_PREFIX}/`)) return pathname.slice(GAME_PREFIX.length) || '/';
+  return pathname;
 }
 
 function readVirtualSource(safePath) {
