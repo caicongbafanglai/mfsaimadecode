@@ -35,22 +35,26 @@
     const bridgeMaterials = createCityBridgeMaterials();
     const cityRoadSegments = [];
     const trafficRoutes = [];
+    const cityBridgeRegistry = [];
+    city.userData.bridgeLimit = zone.radius > 1600 ? 4 : zone.radius > 900 ? 3 : 2;
+    const primaryBridgeOrder = cityRoadPositionsByBridgePriority(roadPositions);
   
-    for (const x of roadPositions) createCityRoadSegments(city, true, x, span, roadMaterial, stripeMaterial, bridgeMaterials, cityRoadSegments, trafficRoutes, CITY_ROAD_PRIMARY_WIDTH, 'primary');
-    for (const z of roadPositions) createCityRoadSegments(city, false, z, span, roadMaterial, stripeMaterial, bridgeMaterials, cityRoadSegments, trafficRoutes, CITY_ROAD_PRIMARY_WIDTH, 'primary');
+    for (const x of primaryBridgeOrder) createCityRoadSegments(city, true, x, span, roadMaterial, stripeMaterial, bridgeMaterials, cityRoadSegments, trafficRoutes, CITY_ROAD_PRIMARY_WIDTH, 'primary', cityBridgeRegistry);
+    for (const z of primaryBridgeOrder) createCityRoadSegments(city, false, z, span, roadMaterial, stripeMaterial, bridgeMaterials, cityRoadSegments, trafficRoutes, CITY_ROAD_PRIMARY_WIDTH, 'primary', cityBridgeRegistry);
 
     const secondaryRoadPositions = [];
     for (let i = 0; i < roadPositions.length - 1; i++) {
       const midpoint = (roadPositions[i] + roadPositions[i + 1]) / 2;
       if (denseCity || i % 2 === index % 2) secondaryRoadPositions.push(midpoint);
     }
-    for (const x of secondaryRoadPositions) {
+    const secondaryBridgeOrder = cityRoadPositionsByBridgePriority(secondaryRoadPositions);
+    for (const x of secondaryBridgeOrder) {
       if (!denseCity && Math.abs(x) > span * 0.38) continue;
-      createCityRoadSegments(city, true, x, span * 0.86, roadMaterial, stripeMaterial, bridgeMaterials, cityRoadSegments, trafficRoutes, CITY_ROAD_SECONDARY_WIDTH, 'secondary');
+      createCityRoadSegments(city, true, x, span * 0.86, roadMaterial, stripeMaterial, bridgeMaterials, cityRoadSegments, trafficRoutes, CITY_ROAD_SECONDARY_WIDTH, 'secondary', cityBridgeRegistry);
     }
-    for (const z of secondaryRoadPositions) {
+    for (const z of secondaryBridgeOrder) {
       if (!denseCity && Math.abs(z) > span * 0.38) continue;
-      createCityRoadSegments(city, false, z, span * 0.86, roadMaterial, stripeMaterial, bridgeMaterials, cityRoadSegments, trafficRoutes, CITY_ROAD_SECONDARY_WIDTH, 'secondary');
+      createCityRoadSegments(city, false, z, span * 0.86, roadMaterial, stripeMaterial, bridgeMaterials, cityRoadSegments, trafficRoutes, CITY_ROAD_SECONDARY_WIDTH, 'secondary', cityBridgeRegistry);
     }
   
     const palette = denseCity
@@ -129,7 +133,11 @@
     createCityTraffic(city, zone, trafficRoutes, rng, denseCity);
   }
 
-  function createCityRoadSegments(city, vertical, offset, span, roadMaterial, stripeMaterial, bridgeMaterials, roadSegments, trafficRoutes, width, kind) {
+  function cityRoadPositionsByBridgePriority(positions) {
+    return [...positions].sort((a, b) => Math.abs(a) - Math.abs(b) || a - b);
+  }
+
+  function createCityRoadSegments(city, vertical, offset, span, roadMaterial, stripeMaterial, bridgeMaterials, roadSegments, trafficRoutes, width, kind, cityBridgeRegistry) {
     const half = span / 2 + 120;
     const sampleStep = 70;
     let start = null;
@@ -161,11 +169,14 @@
             bridgeMaterials,
             roadMaterial,
             stripeMaterial,
-            trafficRoutes
+            trafficRoutes,
+            cityBridgeRegistry
           );
           if (converted === true) {
             urbanIntegrityReport.riverCrossingReport.riverRoadCrossingsDetected++;
             urbanIntegrityReport.riverCrossingReport.crossingsConvertedToBridges++;
+          } else if (converted === 'skipped') {
+            urbanIntegrityReport.riverCrossingReport.riverRoadCrossingsDetected++;
           } else if (converted !== 'blocked') {
             urbanIntegrityReport.riverCrossingReport.riverRoadCrossingsDetected++;
             urbanIntegrityReport.riverCrossingReport.unresolvedCrossings++;
@@ -217,7 +228,7 @@
     };
   }
 
-  function createCityRoadBridge(city, vertical, offset, waterStart, waterEnd, beforeDry, afterDry, width, kind, materials, roadMaterial, stripeMaterial, trafficRoutes) {
+  function createCityRoadBridge(city, vertical, offset, waterStart, waterEnd, beforeDry, afterDry, width, kind, materials, roadMaterial, stripeMaterial, trafficRoutes, cityBridgeRegistry) {
     if (beforeDry === null || afterDry === null) return false;
     const gapStart = Math.min(waterStart, waterEnd);
     const gapEnd = Math.max(waterStart, waterEnd);
@@ -232,6 +243,15 @@
     }
 
     const bridgeType = cityBridgeType(kind, width, gapLength, centerWorld.x, centerWorld.z);
+    const rejection = cityBridgePlanningRejection(city, kind, bridgeType, gapLength, centerWorld, cityBridgeRegistry);
+    if (rejection) {
+      const report = urbanIntegrityReport.bridgeReport;
+      report.plannedBridgeCandidatesSkipped++;
+      if (rejection === 'secondary') report.secondaryBridgeCandidatesSkipped++;
+      if (rejection === 'spacing') report.spacingBridgeCandidatesSkipped++;
+      return 'skipped';
+    }
+
     const deckLength = THREE.MathUtils.clamp(
       gapLength + width * (bridgeType === 'large' ? 4.8 : bridgeType === 'medium' ? 3.8 : 3.0),
       width * 4.2,
@@ -317,6 +337,15 @@
     if (rampSlope <= 0.18) report.bridgesWithValidRamps++;
     else report.bridgesFixedCount++;
     if (deckSurfaceWorldY < RIVER_SURFACE_Y + 6 || deckSurfaceWorldY > bankMax + 30) report.floatingBridgeCount++;
+    cityBridgeRegistry?.push({
+      x: centerWorld.x,
+      z: centerWorld.z,
+      bridgeType,
+      gapLength,
+      kind,
+      vertical,
+      offset
+    });
 
     trafficRoutes.push({
       vertical,
@@ -334,6 +363,22 @@
       endGroundY: terrainHeight(endWorld.x, endWorld.z) + 1.08
     });
     return true;
+  }
+
+  function cityBridgePlanningRejection(city, kind, bridgeType, gapLength, centerWorld, cityBridgeRegistry = []) {
+    if (kind !== 'primary') return 'secondary';
+    if (cityBridgeRegistry.length >= (city.userData.bridgeLimit || 3)) return 'spacing';
+    const minSpacing = cityBridgeMinimumSpacing(bridgeType, gapLength);
+    for (const existing of cityBridgeRegistry) {
+      if (Math.hypot(centerWorld.x - existing.x, centerWorld.z - existing.z) < minSpacing) return 'spacing';
+    }
+    return null;
+  }
+
+  function cityBridgeMinimumSpacing(bridgeType, gapLength) {
+    if (bridgeType === 'large' || gapLength >= 260) return 800;
+    if (bridgeType === 'medium' || gapLength >= 150) return 500;
+    return 300;
   }
 
   function cityBridgeType(kind, width, gapLength, x, z) {
@@ -562,6 +607,12 @@
     mesh.userData.attachedToBuildingFacade = true;
     mesh.userData.cityWindowLod = 'near';
     mesh.userData.windowLightCount = entries.length;
+    mesh.userData.hasParentBuildingIds = entries.every(entry => Boolean(entry.buildingId));
+    mesh.userData.parentBuildingIds = [...new Set(entries.map(entry => entry.buildingId).filter(Boolean))];
+    mesh.userData.windowFacadeDistanceMeters = {
+      min: WINDOW_LIGHT_WALL_OFFSET,
+      max: WINDOW_LIGHT_GLOW_OFFSET
+    };
     mesh.instanceMatrix.needsUpdate = true;
     city.add(mesh);
   }
@@ -600,6 +651,7 @@
     points.userData.cityFarWindowLight = true;
     points.userData.windowLightBatch = true;
     points.userData.attachedToBuildingFacade = true;
+    points.userData.hasParentBuildingIds = true;
     points.userData.sourceWindowLights = positions.length / 3;
     points.userData.baseOpacity = 0.78;
     points.userData.baseSize = 2.35;
@@ -798,12 +850,18 @@
             urbanIntegrityReport.streetlightReport.fixedCount++;
             continue;
           }
-          entries.push({ x: localX, y: baseY, z: localZ });
+          entries.push({ x: localX, y: baseY, z: localZ, roadSegmentId: streetlightRoadSegmentId(city, segment) });
         }
       }
     }
 
     addInstancedStreetlights(city, entries);
+  }
+
+  function streetlightRoadSegmentId(city, segment) {
+    const cityName = (city.name || 'city').replace(/\s+/g, '-');
+    const axis = segment.vertical ? 'vertical' : 'horizontal';
+    return `${cityName}:${axis}:${segment.kind}:${Math.round(segment.offset)}:${Math.round(segment.start)}:${Math.round(segment.end)}`;
   }
 
   function cityStreetlightClear(worldX, worldZ, baseY, cityBuildingRects) {
@@ -840,12 +898,17 @@
     poleMesh.userData.diagnosticType = 'streetlight';
     poleMesh.userData.diagnosticCount = entries.length;
     poleMesh.userData.streetlightBatch = true;
+    poleMesh.userData.hasRoadSegmentIds = entries.every(entry => Boolean(entry.roadSegmentId));
+    poleMesh.userData.roadSegmentIds = entries.map(entry => entry.roadSegmentId);
     poleMesh.instanceMatrix.needsUpdate = true;
     city.add(poleMesh);
 
     lampMesh.name = 'city-streetlight-lamp-batch';
     lampMesh.renderOrder = 9;
     lampMesh.userData.streetlightBatch = true;
+    lampMesh.userData.attachedToStreetlightPole = true;
+    lampMesh.userData.hasRoadSegmentIds = poleMesh.userData.hasRoadSegmentIds;
+    lampMesh.userData.roadSegmentIds = poleMesh.userData.roadSegmentIds;
     lampMesh.instanceMatrix.needsUpdate = true;
     city.add(lampMesh);
     urbanIntegrityReport.streetlightReport.totalStreetlights += entries.length;
@@ -854,7 +917,6 @@
   function createCityTraffic(city, zone, trafficRoutes, rng, denseCity) {
     const drivableRoutes = trafficRoutes.filter(route => route.end - route.start > (route.bridge ? 95 : 150));
     if (!drivableRoutes.length) return;
-    const carColors = [0xd84747, 0xf1c84b, 0x4d8bd6, 0xe6e9ec, 0x222c36, 0x4bbf77, 0xd88a3d];
     const requested = zone.cars || 44;
     const targetCars = Math.min(
       denseCity ? requested : Math.max(4, Math.round(requested * 0.36)),
@@ -873,7 +935,7 @@
       const world = cityRoadWorldPoint(city, route.vertical, route.offset, routePosition, laneOffset);
       const rotation = cityTrafficRotation(route, direction);
       const y = cityTrafficVehicleY(city, route, routePosition);
-      const color = carColors[Math.floor(rng() * carColors.length)];
+      const color = chooseVehicleColor('city', rng, `city:${zone.name || city.name}`);
       const renderedCar = trafficRenderer.addCar(world.x, y, world.z, rotation, color);
       const trafficCar = {
         renderedCar,
@@ -899,7 +961,7 @@
   }
 
   function cityTrafficVehicleY(city, route, routePosition) {
-    return cityTrafficRoadSurfaceY(city, route, routePosition) + 0.62;
+    return cityTrafficRoadSurfaceY(city, route, routePosition) + VEHICLE_ROAD_SURFACE_CLEARANCE;
   }
 
   function cityTrafficRoadSurfaceY(city, route, routePosition) {
@@ -1027,6 +1089,8 @@
     const group = new THREE.Group();
     group.position.set(x, y, z);
     group.rotation.y = rotation;
+    group.userData.diagnosticType = 'vehicle';
+    group.userData.diagnosticCount = 1;
     parent.add(group);
   
     const bodyMaterial = new THREE.MeshStandardMaterial({ color, roughness: 0.48, metalness: 0.08 });
@@ -1200,7 +1264,7 @@
         }
         guard++;
       }
-      const y = terrainHeight(worldX, worldZ) + 1.7;
+      const y = terrainHeight(worldX, worldZ) + VILLAGE_VEHICLE_TERRAIN_Y_OFFSET;
       if (car.renderedCar) trafficRenderer.setCarTransform(car.renderedCar, worldX, y, worldZ, car.rotation);
       else car.group.position.y = y;
     }
@@ -1212,8 +1276,12 @@
     const rng = mulberry32(92410);
     const trunkGeometry = new THREE.CylinderGeometry(1.4, 1.8, 10, 7);
     const crownGeometry = new THREE.ConeGeometry(8, 22, 8);
-    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0x6f5135, roughness: 0.88 });
-    const crownMaterial = new THREE.MeshStandardMaterial({ color: 0x245f39, roughness: 0.92 });
+    const trunkMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.88, vertexColors: true });
+    const crownMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92, vertexColors: true });
+    const trunkColors = [0x665034, 0x73583c, 0x59462f];
+    const crownColors = [0x245f39, 0x2f6f3b, 0x3d7740, 0x1f5136, 0x4f7f45];
+    const trunkColor = new THREE.Color();
+    const crownColor = new THREE.Color();
     const hiddenIslandTreeCapacity = 1800;
     const treeCapacity = FOREST_CLUSTERS.reduce((sum, cluster) => sum + cluster.count, 0) + hiddenIslandTreeCapacity;
     const trunks = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, treeCapacity);
@@ -1223,19 +1291,24 @@
 
     const addTree = (x, z, scale, angle) => {
       if (treeCount >= treeCapacity) return false;
+      if (isTreePlacementBlocked(x, z, scale)) return false;
       const y = terrainHeight(x, z);
+      const widthScale = 0.86 + 0.2 * Math.sin(x * 0.013 + z * 0.011);
+      const depthScale = 0.88 + 0.18 * Math.cos(x * 0.009 - z * 0.014);
 
       dummy.position.set(x, y + 5 * scale, z);
       dummy.rotation.set(0, angle, 0);
-      dummy.scale.setScalar(scale);
+      dummy.scale.set(scale * widthScale, scale, scale * depthScale);
       dummy.updateMatrix();
       trunks.setMatrixAt(treeCount, dummy.matrix);
 
       dummy.position.set(x, y + 17 * scale, z);
       dummy.rotation.set(0, angle * 1.7, 0);
-      dummy.scale.setScalar(scale);
+      dummy.scale.set(scale * (0.9 + widthScale * 0.16), scale * (0.92 + rng() * 0.16), scale * (0.9 + depthScale * 0.16));
       dummy.updateMatrix();
       crowns.setMatrixAt(treeCount, dummy.matrix);
+      trunks.setColorAt(treeCount, trunkColor.setHex(trunkColors[treeCount % trunkColors.length]));
+      crowns.setColorAt(treeCount, crownColor.setHex(crownColors[(treeCount + Math.floor(angle * 10)) % crownColors.length]));
       treeCount++;
       return true;
     };
@@ -1273,11 +1346,24 @@
       trunks.userData.diagnosticCount = treeCount;
       crowns.userData.diagnosticType = 'tree';
       crowns.userData.diagnosticCount = 0;
+      trunks.instanceColor.needsUpdate = true;
+      crowns.instanceColor.needsUpdate = true;
       trunks.computeBoundingSphere();
       crowns.computeBoundingSphere();
       scene.add(trunks);
       scene.add(crowns);
     }
+  }
+
+  function isTreePlacementBlocked(x, z, scale = 1) {
+    const buffer = 10 + scale * 8;
+    if (isStructureFootprintBlocked(x, z, buffer)) return true;
+    if (isGroundOverlayPointBlocked(x, z, 6 + scale * 4)) return true;
+    for (const village of VILLAGES) {
+      const coreRadius = Math.min(86, Math.max(34, village.radius * 0.26)) + buffer;
+      if (Math.hypot(x - village.x, z - village.z) < coreRadius) return true;
+    }
+    return false;
   }
 
   function createHiddenIslandDenseForest(addTree, rng) {

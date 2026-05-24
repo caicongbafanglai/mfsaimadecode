@@ -77,7 +77,8 @@
     state.reverseForceN = forces.reverseForceN;
     state.rollingResistanceN = forces.rollingResistanceN;
     state.wheelBrakeForceN = forces.wheelBrakeForceN;
-    state.brakeForceN = forces.wheelBrakeForceN;
+    state.parkingBrakeForceN = forces.parkingBrakeForceN || 0;
+    state.brakeForceN = forces.wheelBrakeForceN + state.parkingBrakeForceN;
     state.speedBrakeForceN = forces.speedBrakeForceN;
     state.climbEnergyCostN = forces.climbEnergyN;
     state.diveEnergyGainN = forces.diveEnergyN;

@@ -35,6 +35,14 @@ const BANK_SOFT_LIMIT = 33 * DEG_TO_RAD;
 const DEFAULT_GROUND_TRAVEL_SCALE = 1.4;
 const DEFAULT_AIR_TRAVEL_SCALE = 1.5;
 const MAX_WORLD_TRAVEL_SCALE = 1.8;
+const PARK_BRAKE_LOCK_KTS = 2;
+const PARK_BRAKE_LOW_SPEED_KTS = 5;
+const PARK_BRAKE_HIGH_SPEED_KTS = 40;
+const PARK_BRAKE_HIGH_SPEED_DECEL_MS2 = 4.0;
+const PARK_BRAKE_MID_SPEED_DECEL_MS2 = 5.0;
+const PARK_BRAKE_LOW_SPEED_DECEL_MS2 = 6.0;
+const PARK_BRAKE_IDLE_LEVER_THRESHOLD = 0.035;
+const PARK_BRAKE_IDLE_N1_MARGIN = 5;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
 
@@ -89,8 +97,10 @@ export function createFlightPhysics({ keys, state, forwardVec, terrainHeight, sm
     if (wasGrounded) updateGroundVelocity(safeDt, currentIAS, radioAltFt);
     else updateAirVelocity(safeDt, currentIAS, radioAltFt, angleOfAttack);
 
+    applyParkingBrakeLock();
     updateWorldPosition(safeDt, wasGrounded);
     resolveGroundContact(safeDt);
+    applyParkingBrakeLock();
     publishPhysicsVelocity();
     state.verticalSpeed = ((state.position.y - previousY) / safeDt) * 196.85;
     updateWarnings(currentIAS);
@@ -123,6 +133,12 @@ export function createFlightPhysics({ keys, state, forwardVec, terrainHeight, sm
     state.leftBrakePressure = state.leftBrakePressure || 0;
     state.rightBrakePressure = state.rightBrakePressure || 0;
     state.totalBrakePressure = state.totalBrakePressure || 0;
+    state.parkingBrakePressure = state.parkingBrake ? 1 : 0;
+    state.isParked = Boolean(state.parkingBrake && state.grounded && state.mainGearCompressed && (state.isParked || state.speed < ktToMS(PARK_BRAKE_LOCK_KTS)));
+    state.preventGroundMovement = state.isParked;
+    state.parkBrakeWarning = false;
+    state.parkBrakeWarningText = '';
+    state.parkBrakeStatusText = state.parkingBrake ? (state.isParked ? 'PARKED' : 'PARK BRK') : '';
     state.v1Kts = config.performance.v1Kts;
     state.vrKts = config.performance.vrKts;
     state.v2Kts = config.performance.v2Kts;

@@ -58,12 +58,16 @@ export function createHud({ ui, state, rootStyle, terrainHeight, airportWorld })
     const nearest = nearestAirport();
     const speedCalloutActive = Boolean(state.speedCallout) && performance.now() < (state.speedCalloutUntil || 0);
     const brakeText = state.brakeStatusText || '';
+    const parkBrakeConflictText = state.parkBrakeWarningText
+      ? (Math.floor(now / 850) % 2 === 0 ? (state.parkBrakeStatusText || 'PARK BRK ON') : state.parkBrakeWarningText)
+      : '';
+    const parkBrakeText = parkBrakeConflictText || state.parkBrakeStatusText || (state.parkingBrake ? (state.isParked ? 'PARKED' : 'PARK BRK') : '');
     const spoilerModeText = activeSpoilerModeText(state.speedBrakeStatusText);
     const gearModeText = state.gearStatusText === 'GEAR UP' ? '' : state.gearStatusText;
     const flapModeText = state.flapStatusText === 'FLAPS 0' ? '' : state.flapStatusText;
     const systemText = spoilerModeText || gearModeText || flapModeText || '';
     const modeText = state.thrustAlert || state.flightWarning || (speedCalloutActive ? state.speedCallout : '') ||
-      (state.parkingBrake ? 'PARK' : brakeText || (state.reverse > 0.08 ? 'REV' : systemText || (state.lawMode === 'STALL_TRAINING' ? 'STALL TRN' : 'NORMAL LAW')));
+      (parkBrakeText || brakeText || (state.reverse > 0.08 ? 'REV' : systemText || (state.lawMode === 'STALL_TRAINING' ? 'STALL TRN' : 'NORMAL LAW')));
 
     setText(ui.speed, knots);
     setText(ui.altitude, feet);
@@ -82,9 +86,9 @@ export function createHud({ ui, state, rootStyle, terrainHeight, airportWorld })
     setText(ui.mode, modeText);
     setText(ui.simClock, state.simClockText || '06:00');
     setText(ui.simClockSource, state.simClockSource || 'SERVER');
-    ui.mode.classList.toggle('reverse-active', (state.reverse > 0.08 || brakeText || spoilerModeText) && !state.flightWarning && !state.thrustAlert);
-    ui.mode.classList.toggle('warning-active', ['LOW ENERGY', 'OVERSPEED', 'STALL', 'REV LOCKED', 'LVR ASYM', 'FLAP OVERSPEED', 'TOO FAST FOR FLAPS'].includes(modeText));
-    ui.mode.classList.toggle('protection-active', ['ALPHA PROT', 'ALPHA MAX', 'DIVE RECOVERY', 'A.FLOOR', 'TOGA LK', 'SPEED BRK', 'GND SPLR'].includes(modeText));
+    ui.mode.classList.toggle('reverse-active', (state.reverse > 0.08 || brakeText || spoilerModeText || parkBrakeText) && !state.flightWarning && !state.thrustAlert);
+    ui.mode.classList.toggle('warning-active', ['LOW ENERGY', 'OVERSPEED', 'STALL', 'REV LOCKED', 'LVR ASYM', 'FLAP OVERSPEED', 'TOO FAST FOR FLAPS', 'PARK BRK ON', 'RELEASE PARKING BRAKE'].includes(modeText));
+    ui.mode.classList.toggle('protection-active', ['ALPHA PROT', 'ALPHA MAX', 'DIVE RECOVERY', 'A.FLOOR', 'TOGA LK', 'SPEED BRK', 'GND SPLR', 'PARK BRK', 'PARKED'].includes(modeText));
     ui.mode.classList.toggle('training-active', !state.flightWarning && !state.thrustAlert && state.lawMode === 'STALL_TRAINING');
     ui.mode.classList.toggle('speed-callout-active', speedCalloutActive && !state.flightWarning && !state.thrustAlert);
     updateFmaAndThrustPanel(knots);

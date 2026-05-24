@@ -425,6 +425,7 @@ function currentTargetAirport() {
 }
 
 function runWorldIntegrityReports(label = 'manual') {
+  const floatingGlobalReport = runFloatingObjectGlobalIntegrity({ scene, terrainHeight, label });
   const groundReport = summarizeGroundPlacement(scene);
   const urbanInfrastructureReport = groundWorld.createUrbanInfrastructureReport?.() || null;
   const roadNetworkReport = roadSystem.createRoadIntegrityReport?.() || null;
@@ -439,6 +440,12 @@ function runWorldIntegrityReports(label = 'manual') {
   const apronLightingReport = airportSystem.createAirportApronLightingReport?.();
   const obstacleReport = airportSystem.createAirportObstacleReport?.();
   const hiddenIslandAirportReport = airportSystem.createHiddenIslandAirportReport?.();
+  augmentFloatingObjectGlobalReport(floatingGlobalReport, {
+    groundReport,
+    urbanInfrastructureReport,
+    roadNetworkReport,
+    hiddenIslandAirportReport
+  });
   window.MHFS_GROUND_PLACEMENT_REPORT = groundReport;
   window.MHFS_URBAN_INFRASTRUCTURE_REPORT = urbanInfrastructureReport;
   window.MHFS_WINDOW_LIGHT_DAY_NIGHT_REPORT = windowLightDayNightReport;
@@ -446,7 +453,9 @@ function runWorldIntegrityReports(label = 'manual') {
   window.MHFS_AIRPORT_APRON_LIGHTING_REPORT = apronLightingReport;
   window.MHFS_AIRPORT_OBSTACLE_REPORT = obstacleReport;
   window.MHFS_HIDDEN_ISLAND_AIRPORT_REPORT = hiddenIslandAirportReport;
+  window.MHFS_FLOATING_OBJECT_GLOBAL_REPORT = floatingGlobalReport;
   if (enableConsoleDiagnostics || label === 'startup' || label === 'airport-priority-load') {
+    console.info(floatingGlobalReport.text);
     console.info('Ground Placement Report:', {
       BuildingsChecked: groundReport.buildingsChecked,
       FloatingBuildingsFixed: groundReport.floatingBuildingsFixed,
@@ -470,7 +479,7 @@ function runWorldIntegrityReports(label = 'manual') {
     console.info('Airport Obstacle Report:', obstacleReport);
     console.info('Hidden Island Airport Report:', hiddenIslandAirportReport);
   }
-  return { groundReport, urbanInfrastructureReport, windowLightDayNightReport, nightReport, apronLightingReport, obstacleReport, hiddenIslandAirportReport };
+  return { floatingGlobalReport, groundReport, urbanInfrastructureReport, windowLightDayNightReport, nightReport, apronLightingReport, obstacleReport, hiddenIslandAirportReport };
 }
 
 function mergeRoadIntegrityReports(cityReport = {}, networkReport = {}) {
@@ -683,7 +692,7 @@ function updateSpeedFeeling(dt) {
   const acceleration = state.longitudinalAccelerationMS2 || 0;
   const speedTrendKts = acceleration * 10 * KT_PER_MPS;
   const onGround = state.grounded === true;
-  const wheelSpeedKts = onGround ? iasKts : 0;
+  const wheelSpeedKts = onGround && !state.preventGroundMovement ? iasKts : 0;
   const groundRumbleFactor = onGround ? smoothstep(30, 145, wheelSpeedKts) : 0;
   const brakeFeedbackFactor = onGround ? THREE.MathUtils.clamp(state.totalBrakePressure || 0, 0, 1) * smoothstep(8, 120, wheelSpeedKts) : 0;
   const reverseFeedbackFactor = onGround ? THREE.MathUtils.clamp(Math.max(state.reverse || 0, state.reverseEffect || 0), 0, 1) * smoothstep(18, 120, wheelSpeedKts) : 0;
@@ -786,8 +795,8 @@ function updateAudioFeedback(deltaTime) {
     playCue(state.audioCue);
     state.audioCue = '';
   }
-  const warning = state.flightWarning || state.fmaThrustMode || '';
-  if (warning && warning !== lastAudioWarning && ['LOW ENERGY', 'OVERSPEED', 'STALL', 'A.FLOOR', 'RETARD', 'REV LOCKED', 'LVR ASYM', 'FLAP OVERSPEED', 'TOO FAST FOR FLAPS'].includes(warning)) {
+  const warning = state.flightWarning || state.parkBrakeWarningText || state.fmaThrustMode || '';
+  if (warning && warning !== lastAudioWarning && ['LOW ENERGY', 'OVERSPEED', 'STALL', 'A.FLOOR', 'RETARD', 'REV LOCKED', 'LVR ASYM', 'FLAP OVERSPEED', 'TOO FAST FOR FLAPS', 'PARK BRK ON', 'RELEASE PARKING BRAKE'].includes(warning)) {
     playCue(warning);
   }
   lastAudioWarning = warning;

@@ -28,6 +28,25 @@
 
   function updateGroundVelocity(dt, currentIAS, altitudeFeet) {
     const speedMs = Math.max(0, physicsVelocity.length());
+    const groundSpeedKts = speedMs * MS_TO_KT;
+    const parkingBrakeState = updateParkingBrakeState(true, groundSpeedKts);
+    if (parkingBrakeState.locked) {
+      publishForceState({
+        netForceN: 0,
+        thrustN: 0,
+        dragN: 0,
+        reverseForceN: 0,
+        rollingResistanceN: 0,
+        wheelBrakeForceN: 0,
+        parkingBrakeForceN: massKg * PARK_BRAKE_LOW_SPEED_DECEL_MS2,
+        speedBrakeForceN: 0,
+        climbEnergyN: 0,
+        diveEnergyN: 0,
+        accelerationMS2: 0
+      });
+      return;
+    }
+
     const density = airDensityForAltitude(altitudeFeet, config);
     const flap = state.flapConfig || flapConfigAt(state.flapPositionIndex);
     const speedBrake = speedBrakeEffect(currentIAS);
@@ -42,33 +61,36 @@
     const thrustN = thrustFromN1(state.engineN1Average || config.engines.idleN1, config);
     const reverseForceN = reverseForce(currentIAS);
     const wheelBrakeForceN = wheelBrakeForce(currentIAS);
-    const parkingBrakeForceN = state.parkingBrake ? massKg * 2.2 : 0;
     const forwardThrustN = state.reverse > 0.02 ? 0 : thrustN;
-    let netForceN = forwardThrustN - dragN - rollingResistanceN - reverseForceN - wheelBrakeForceN - parkingBrakeForceN;
+    const groundAccelerationThrustN = parkingBrakeState.active ? 0 : forwardThrustN;
+    const parkingBrakeForceN = parkingBrakeState.active ? massKg * parkingBrakeState.decelerationMS2 : 0;
+    let netForceN = groundAccelerationThrustN - dragN - rollingResistanceN - reverseForceN - wheelBrakeForceN - parkingBrakeForceN;
     if (netForceN < 0) {
       const limitedDecel = Math.min(-netForceN / massKg, config.brakes.maxTotalGroundDecelerationMS2);
       netForceN = -limitedDecel * massKg;
     }
     let nextSpeed = speedMs + (netForceN / massKg) * dt;
     if (nextSpeed < 0.25 && netForceN <= 0) nextSpeed = 0;
-    if (state.parkingBrake && forwardThrustN < rollingResistanceN + parkingBrakeForceN) nextSpeed = 0;
+    if (parkingBrakeState.active && nextSpeed * MS_TO_KT < PARK_BRAKE_LOCK_KTS) nextSpeed = 0;
     groundForward.set(0, 0, -1).applyEuler(new THREE.Euler(0, state.yaw, 0, 'YXZ')).normalize();
     physicsVelocity.copy(groundForward).multiplyScalar(clamp(nextSpeed, 0, ktToMS(410)));
     physicsVelocity.y = 0;
+    if (parkingBrakeState.active && nextSpeed <= 0) lockAircraftOnGround();
 
     const rotateReady = currentIAS >= config.performance.vrKts && state.pitch > 4 * DEG_TO_RAD;
     const liftRatio = Math.pow(Math.max(nextSpeed, 1) / ktToMS(flap.stallSpeedKts), 2) * flap.liftMultiplier * (1 - groundSpoiler * config.groundSpoilers.liftLoss);
-    if (rotateReady && liftRatio > 0.96 && state.gearPosition > 0.45) {
+    if (!parkingBrakeState.active && rotateReady && liftRatio > 0.96 && state.gearPosition > 0.45) {
       physicsVelocity.y = Math.max(1.5, (liftRatio - 0.88) * 6.5 + state.pitch * 12);
     }
 
     publishForceState({
       netForceN,
-      thrustN: forwardThrustN,
+      thrustN: groundAccelerationThrustN,
       dragN,
       reverseForceN,
       rollingResistanceN,
       wheelBrakeForceN,
+      parkingBrakeForceN,
       speedBrakeForceN: speedBrake.forceN,
       climbEnergyN: 0,
       diveEnergyN: 0,
@@ -77,6 +99,7 @@
   }
 
   function updateAirVelocity(dt, currentIAS, altitudeFeet, angleOfAttack) {
+    updateParkingBrakeState(false, 0);
     let speedMs = Math.max(physicsVelocity.length(), config.aerodynamics.minAirborneSpeedMS);
     velocityDirection.copy(physicsVelocity).normalize();
     if (velocityDirection.lengthSq() < 0.5) velocityDirection.copy(attitudeForward);
@@ -165,6 +188,14 @@
   }
 
   function updateWorldPosition(dt, wasGrounded) {
+    if (state.parkingBrake && state.isParked && wasGrounded && state.mainGearCompressed !== false) {
+      lockAircraftOnGround();
+      state.worldTravelScale = 0;
+      state.visualMapSpeed = 0;
+      state.visualPosition.copy(state.position);
+      return;
+    }
+
     const activeTravelScale = activeWorldTravelScale(wasGrounded);
     worldVelocity.copy(physicsVelocity);
     worldVelocity.x *= activeTravelScale;
@@ -173,6 +204,117 @@
     state.visualMapSpeed = Math.hypot(worldVelocity.x, worldVelocity.z);
     state.position.addScaledVector(worldVelocity, dt);
     state.visualPosition.copy(state.position);
+  }
+
+  function updateParkingBrakeState(groundEffective, groundSpeedKts) {
+    state.parkingBrakePressure = state.parkingBrake ? 1 : 0;
+    if (!state.parkingBrake) {
+      state.isParked = false;
+      state.preventGroundMovement = false;
+      state.parkBrakeWarning = false;
+      state.parkBrakeWarningText = '';
+      state.parkBrakeStatusText = '';
+      state._parkBrakeThrustConflict = false;
+      return { active: false, locked: false, decelerationMS2: 0 };
+    }
+
+    const active = groundEffective && state.grounded === true && state.mainGearCompressed !== false;
+    state.parkBrakeStatusText = state.isParked ? 'PARKED' : 'PARK BRK';
+    if (!active) {
+      state.isParked = false;
+      state.preventGroundMovement = false;
+      state.parkBrakeWarning = false;
+      state.parkBrakeWarningText = '';
+      state.parkBrakeStatusText = 'PARK BRK';
+      state._parkBrakeThrustConflict = false;
+      return { active: false, locked: false, decelerationMS2: 0 };
+    }
+
+    const thrustConflict = parkingBrakeThrustDemanded();
+    state.parkBrakeWarning = true;
+    state.parkBrakeStatusText = thrustConflict ? 'PARK BRK ON' : (state.isParked ? 'PARKED' : 'PARK BRK');
+    state.parkBrakeWarningText = thrustConflict ? 'RELEASE PARKING BRAKE' : '';
+    if (thrustConflict && !state._parkBrakeThrustConflict) state.audioCue = 'PARK BRK ON';
+    state._parkBrakeThrustConflict = thrustConflict;
+
+    if (state.isParked || groundSpeedKts < PARK_BRAKE_LOCK_KTS) {
+      lockAircraftOnGround();
+      state.parkBrakeStatusText = thrustConflict ? 'PARK BRK ON' : 'PARKED';
+      return { active: true, locked: true, decelerationMS2: PARK_BRAKE_LOW_SPEED_DECEL_MS2 };
+    }
+
+    return {
+      active: true,
+      locked: false,
+      decelerationMS2: parkingBrakeDecelerationForSpeed(groundSpeedKts)
+    };
+  }
+
+  function parkingBrakeDecelerationForSpeed(groundSpeedKts) {
+    if (groundSpeedKts > PARK_BRAKE_HIGH_SPEED_KTS) return PARK_BRAKE_HIGH_SPEED_DECEL_MS2;
+    if (groundSpeedKts > PARK_BRAKE_LOW_SPEED_KTS) return PARK_BRAKE_MID_SPEED_DECEL_MS2;
+    return PARK_BRAKE_LOW_SPEED_DECEL_MS2;
+  }
+
+  function parkingBrakeThrustDemanded() {
+    const leverPosition = Math.max(
+      finiteLeverPosition(state.thrustLeverLeft),
+      finiteLeverPosition(state.thrustLeverRight),
+      finiteLeverPosition(state.targetThrustLeverLeft),
+      finiteLeverPosition(state.targetThrustLeverRight),
+      finiteLeverPosition(state.leverPosition),
+      finiteLeverPosition(state.targetLeverPosition),
+      finiteLeverPosition(state.throttle)
+    );
+    const n1 = Math.max(
+      Number.isFinite(state.engineN1Average) ? state.engineN1Average : config.engines.idleN1,
+      Number.isFinite(state.targetN1Average) ? state.targetN1Average : config.engines.idleN1
+    );
+    return leverPosition > PARK_BRAKE_IDLE_LEVER_THRESHOLD || n1 > config.engines.idleN1 + PARK_BRAKE_IDLE_N1_MARGIN;
+  }
+
+  function finiteLeverPosition(value) {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function applyParkingBrakeLock() {
+    if (!state.parkingBrake || !state.isParked || state.grounded !== true || state.mainGearCompressed === false) return;
+    lockAircraftOnGround();
+  }
+
+  function lockAircraftOnGround() {
+    const verticalY = Number.isFinite(physicsVelocity.y) ? physicsVelocity.y : 0;
+    physicsVelocity.x = 0;
+    physicsVelocity.z = 0;
+    physicsVelocity.y = verticalY;
+    worldVelocity.x = 0;
+    worldVelocity.z = 0;
+    if (state.velocity?.isVector3 && state.velocity !== physicsVelocity) {
+      const velocityY = Number.isFinite(state.velocity.y) ? state.velocity.y : 0;
+      state.velocity.x = 0;
+      state.velocity.z = 0;
+      state.velocity.y = velocityY;
+    }
+    if (state.horizontalVelocity?.isVector3) {
+      state.horizontalVelocity.x = 0;
+      state.horizontalVelocity.z = 0;
+    }
+    if (state.groundVelocity?.isVector3) {
+      state.groundVelocity.x = 0;
+      state.groundVelocity.z = 0;
+    }
+    if (state.worldVelocity?.isVector3) {
+      state.worldVelocity.x = 0;
+      state.worldVelocity.z = 0;
+    }
+    state.groundSpeedKts = 0;
+    state.wheelSpeedKts = 0;
+    state.visualMapSpeed = 0;
+    state.physicsSpeedMS = Math.abs(verticalY);
+    state.indicatedSpeedMS = Math.abs(verticalY);
+    state.speed = Math.abs(verticalY);
+    state.isParked = true;
+    state.preventGroundMovement = true;
   }
 
   function resolveGroundContact(dt) {
@@ -289,4 +431,3 @@
     if (!data.basePosition) data.basePosition = surface.position.clone();
     return data;
   }
-

@@ -53,7 +53,73 @@ const CITY_FAR_WINDOW_DOT_STRIDE = 2;
 const CITY_BRIDGE_DECK_SURFACE_Y = 3.08;
 const CITY_BRIDGE_EDGE_HEIGHT = 2.8;
 const CITY_BRIDGE_MIN_RAMP_LENGTH = 92;
+const VEHICLE_ROAD_SURFACE_CLEARANCE = 0.28;
+const VILLAGE_VEHICLE_TERRAIN_Y_OFFSET = 1.38;
+const VEHICLE_COLOR_ORDER = [
+  'white',
+  'black',
+  'silver',
+  'gray',
+  'dark gray',
+  'blue',
+  'dark blue',
+  'red',
+  'burgundy',
+  'green',
+  'dark green',
+  'brown',
+  'beige',
+  'pale yellow'
+];
+const VEHICLE_COLOR_PROFILES = {
+  city: [
+    { name: 'white', hex: 0xf2f4f2, weight: 20 },
+    { name: 'black', hex: 0x15181c, weight: 14 },
+    { name: 'silver', hex: 0xc7ccd0, weight: 16 },
+    { name: 'gray', hex: 0x777d82, weight: 14 },
+    { name: 'dark gray', hex: 0x3f454a, weight: 10 },
+    { name: 'blue', hex: 0x315f98, weight: 6 },
+    { name: 'dark blue', hex: 0x18395f, weight: 5 },
+    { name: 'red', hex: 0xaa3834, weight: 5 },
+    { name: 'burgundy', hex: 0x6e2931, weight: 3 },
+    { name: 'green', hex: 0x496f4a, weight: 3 },
+    { name: 'dark green', hex: 0x264633, weight: 2 },
+    { name: 'brown', hex: 0x73543c, weight: 2 },
+    { name: 'beige', hex: 0xc7b995, weight: 2 },
+    { name: 'pale yellow', hex: 0xd7c87b, weight: 1 }
+  ],
+  rural: [
+    { name: 'white', hex: 0xeff1ed, weight: 22 },
+    { name: 'black', hex: 0x17191b, weight: 12 },
+    { name: 'silver', hex: 0xbfc4c6, weight: 16 },
+    { name: 'gray', hex: 0x70777a, weight: 14 },
+    { name: 'dark gray', hex: 0x45484a, weight: 12 },
+    { name: 'blue', hex: 0x3a638b, weight: 4 },
+    { name: 'dark blue', hex: 0x203a58, weight: 4 },
+    { name: 'red', hex: 0x9c4036, weight: 3 },
+    { name: 'burgundy', hex: 0x642f35, weight: 2 },
+    { name: 'green', hex: 0x4c6b45, weight: 3 },
+    { name: 'dark green', hex: 0x2f4a34, weight: 3 },
+    { name: 'brown', hex: 0x73553d, weight: 4 },
+    { name: 'beige', hex: 0xc7b896, weight: 4 },
+    { name: 'pale yellow', hex: 0xd2c47b, weight: 1 }
+  ]
+};
 let farCityWindowSpriteTexture = null;
+
+function createEmptyVehicleColorDistribution() {
+  return Object.fromEntries(VEHICLE_COLOR_ORDER.map(name => [name, 0]));
+}
+
+function weightedVehicleColor(profile, rng) {
+  const totalWeight = profile.reduce((sum, entry) => sum + entry.weight, 0);
+  let roll = rng() * totalWeight;
+  for (const entry of profile) {
+    roll -= entry.weight;
+    if (roll <= 0) return entry;
+  }
+  return profile[profile.length - 1];
+}
 
 export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry32, getRenderQuality = () => null }) {
   const createTerrainConformingPatch = createTerrainPatchFactory({ scene, terrainHeight });
@@ -61,6 +127,7 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
   const groundOverlayRects = [];
   let trafficUpdateDebt = 0;
   let vehicleFixCount = 0;
+  const vehicleLastColorByArea = new Map();
   const houseWindowGeometry = new THREE.PlaneGeometry(4.2, 3.2);
   const houseWindowGlowGeometry = new THREE.PlaneGeometry(8.6, 6.2);
   const buildingWindowGeometry = new THREE.PlaneGeometry(1, 1);
@@ -138,7 +205,10 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
         floatingBridgeCount: 0,
         bridgeRoadMisalignmentCount: 0,
         bridgesOverlappingAirportZones: 0,
-        bridgesFixedCount: 0
+        bridgesFixedCount: 0,
+        plannedBridgeCandidatesSkipped: 0,
+        secondaryBridgeCandidatesSkipped: 0,
+        spacingBridgeCandidatesSkipped: 0
       },
       vehicleReport: {
         totalActiveVehicles: 0,
@@ -149,7 +219,9 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
         vehiclesOnRunways: 0,
         vehiclesOnTaxiways: 0,
         vehiclesOnAprons: 0,
-        vehiclesFixedCount: 0
+        vehiclesFixedCount: 0,
+        vehicleColorsAdded: VEHICLE_COLOR_ORDER.length,
+        vehicleColorDistribution: createEmptyVehicleColorDistribution()
       },
       riverCrossingReport: {
         riverRoadCrossingsDetected: 0,
@@ -230,6 +302,34 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
 
   function registerGroundOverlayRect(rect) {
     groundOverlayRects.push(rect);
+  }
+
+  function isGroundOverlayPointBlocked(x, z, margin = 0) {
+    return groundOverlayRects.some(rect => {
+      const dx = x - rect.x;
+      const dz = z - rect.z;
+      const localX = dx * rect.axisX.x + dz * rect.axisX.z;
+      const localZ = dx * rect.axisZ.x + dz * rect.axisZ.z;
+      return Math.abs(localX) < rect.halfWidth + margin &&
+        Math.abs(localZ) < rect.halfDepth + margin;
+    });
+  }
+
+  function chooseVehicleColor(profileName, rng, areaKey = 'global') {
+    const profile = VEHICLE_COLOR_PROFILES[profileName] || VEHICLE_COLOR_PROFILES.city;
+    const last = vehicleLastColorByArea.get(areaKey);
+    let entry = weightedVehicleColor(profile, rng);
+    for (let attempt = 0; attempt < 4 && entry.name === last && profile.length > 1; attempt++) {
+      entry = weightedVehicleColor(profile, rng);
+    }
+    vehicleLastColorByArea.set(areaKey, entry.name);
+    recordVehicleColor(entry.name);
+    return entry.hex;
+  }
+
+  function recordVehicleColor(name) {
+    const distribution = urbanIntegrityReport.vehicleReport.vehicleColorDistribution;
+    distribution[name] = (distribution[name] || 0) + 1;
   }
 
   function isWaterSurface(x, z) {
@@ -329,7 +429,6 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
     const roadMaterial = liftSurfaceMaterial(new THREE.MeshStandardMaterial({ color: 0x4d5147, roughness: 0.92 }), -1, -1);
     const dustMaterial = liftSurfaceMaterial(new THREE.MeshStandardMaterial({ color: 0x8e815f, roughness: 0.95 }), -1, -1);
     const stripeMaterial = liftSurfaceMaterial(new THREE.MeshStandardMaterial({ color: 0xded6b9, roughness: 0.7 }), -2, -2);
-    const carColors = [0xd84747, 0xf1c84b, 0x4d8bd6, 0xe6e9ec, 0x222c36, 0x4bbf77, 0xd88a3d, 0x8d9cc7];
     const rng = mulberry32(91627);
   
     for (const village of VILLAGES) {
@@ -344,8 +443,9 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
           const z = a.z + (b.z - a.z) * t;
           if (!isWaterSurface(x, z) && !isRunwayEndUrbanRoadZone(x, z) && !isUrbanAirportExcluded(x, z, 20)) {
             const angle = Math.atan2(-(b.z - a.z), b.x - a.x);
-            const y = terrainHeight(x, z) + 1.7;
-            createCar(scene, x, y, z, angle - Math.PI / 2, carColors[Math.floor(rng() * carColors.length)]);
+            const y = terrainHeight(x, z) + VILLAGE_VEHICLE_TERRAIN_Y_OFFSET;
+            const color = chooseVehicleColor('rural', rng, `village-road:${village.name}`);
+            createCar(scene, x, y, z, angle - Math.PI / 2, color);
           }
         }
       }

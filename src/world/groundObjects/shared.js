@@ -23,6 +23,10 @@ export function createTerrainPatchFactory({ scene, terrainHeight }) {
     const patch = new THREE.Mesh(geometry, material);
     patch.receiveShadow = true;
     patch.renderOrder = renderOrder;
+    patch.userData.terrainConformingPatch = true;
+    patch.userData.groundOffset = lift;
+    patch.userData.diagnosticType = 'ground-overlay';
+    patch.userData.diagnosticCount = 1;
     parent.add(patch);
     return patch;
   };

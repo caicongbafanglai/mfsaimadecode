@@ -67,6 +67,9 @@
     mesh.userData.airportName = group.userData.airportName || '';
     mesh.userData.airportLightLayer = fixtureLayerForName(name);
     mesh.userData.airportCriticalLight = /runway|approach|taxi/.test(mesh.userData.airportLightLayer);
+    mesh.userData.airportFixtureSupport = true;
+    mesh.userData.airportFixtureCount = entries.length;
+    mesh.userData.fixtureGroundedByBase = true;
     mesh.userData.minVisibleDistance = fixtureVisibleDistanceForLayer(mesh.userData.airportLightLayer);
     mesh.userData.airportNightPriority = fixturePriorityForLayer(mesh.userData.airportLightLayer);
     mesh.visible = false;

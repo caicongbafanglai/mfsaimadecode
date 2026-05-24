@@ -20,6 +20,10 @@ import { createMultiplayerSystem } from './network/multiplayer.js?v=202605070200
 import { createUfoEventController } from './world/ufoEvents.js?v=202605070200';
 import { createEngineAudioSystem } from './audio/engineAudio.js?v=202605061100';
 import {
+  augmentFloatingObjectGlobalReport,
+  runFloatingObjectGlobalIntegrity
+} from './world/floatingObjectIntegrity.js?v=202605240100';
+import {
   DEFAULT_RENDER_QUALITY,
   RENDER_QUALITY_PRESETS,
   applyUltraSceneQuality,
@@ -234,6 +238,12 @@ const state = {
   throttle: 0.34,
   reverse: 0,
   parkingBrake: false,
+  parkingBrakePressure: 0,
+  isParked: false,
+  preventGroundMovement: false,
+  parkBrakeWarning: false,
+  parkBrakeWarningText: '',
+  parkBrakeStatusText: '',
   verticalSpeed: 0,
   grounded: true,
   lawMode: 'NORMAL_LAW',
@@ -279,6 +289,10 @@ if (startMode === 'parked') {
   state.throttle = 0;
   state.reverse = 0;
   state.parkingBrake = true;
+  state.parkingBrakePressure = 1;
+  state.isParked = true;
+  state.preventGroundMovement = true;
+  state.parkBrakeStatusText = 'PARKED';
 } else if (startMode === 'air' || startMode === 'cruise') {
   const x = AIRPORTS[0].x;
   const z = AIRPORTS[0].z - 720;
@@ -295,6 +309,9 @@ if (startMode === 'parked') {
   state.pitch = startMode === 'cruise' ? 0 : altitudeMeters > 650 ? -0.025 : -0.05;
   state.grounded = false;
   state.parkingBrake = false;
+  state.parkingBrakePressure = 0;
+  state.isParked = false;
+  state.preventGroundMovement = false;
 }
 
 state.physicsSpeedMS = Math.abs(state.speed);
@@ -420,7 +437,6 @@ function startWorldBuildQueue() {
       dayNightCycle.update(0);
     }),
     () => groundWorld.createCity(),
-    () => groundWorld.createForests(),
     () => cloudSystem.createClouds(),
     () => birdSystem.createBirds(),
     ...(denseScenery ? [
@@ -436,9 +452,12 @@ function startWorldBuildQueue() {
     () => groundWorld.createAirfieldLowHomes(),
     () => groundWorld.createRunwayEndScatterHomes(),
     () => groundWorld.createFarmlandRegions(),
+    () => groundWorld.createForests(),
     () => groundWorld.createGroundDetails(),
     () => groundWorld.createLowGrassMeadows()
-  ] : [];
+  ] : [
+    () => groundWorld.createForests()
+  ];
   const tasks = [...criticalTasks, ...backgroundTasks];
   let taskIndex = 0;
   let criticalResolved = false;
@@ -521,6 +540,12 @@ function toggleParkingBrake() {
     return;
   }
   state.parkingBrake = !state.parkingBrake;
-  if (state.parkingBrake) throttleSystem.setDetent('IDLE');
+  state.parkingBrakePressure = state.parkingBrake ? 1 : 0;
+  state.isParked = false;
+  state.preventGroundMovement = false;
+  state.parkBrakeWarning = false;
+  state.parkBrakeWarningText = '';
+  state.parkBrakeStatusText = state.parkingBrake ? 'PARK BRK' : '';
+  state.audioCue = state.parkingBrake ? 'parking_brake_set' : 'parking_brake_release';
   hud.updateHud();
 }

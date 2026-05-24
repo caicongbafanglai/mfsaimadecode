@@ -290,9 +290,6 @@ export function createThrottleSystem({ state, terrainHeight, keys = new Set() })
       state.togaLockActive = false;
       state.togaLockArmedForReset = false;
     }
-    if (detent.position > detentByName('IDLE').position) {
-      state.parkingBrake = false;
-    }
     if (side === 'left' || side === 'both') {
       state.targetThrustDetentLeft = detent.name;
       state.targetThrustLeverLeft = detent.position;
@@ -336,7 +333,6 @@ export function createThrottleSystem({ state, terrainHeight, keys = new Set() })
       state.targetThrustLeverRight = clamped;
       state.targetThrustDetentRight = nearestAllowedDetent(clamped, allowReverse).name;
     }
-    if (clamped > 0.015) state.parkingBrake = false;
   }
 
   function snapLever(side = 'both') {
@@ -412,7 +408,6 @@ export function createThrottleSystem({ state, terrainHeight, keys = new Set() })
     const next = moveToward(current, target, LEVER_TARGET_CHASE_SPEED * dt);
     state[leverKey] = Math.abs(next - target) < 0.003 ? target : next;
     state[targetLeverKey] = target;
-    if (state[leverKey] > 0.015) state.parkingBrake = false;
   }
 
   function leverProfile(sideName, radioAltFt, allowReverse) {

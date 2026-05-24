@@ -21,6 +21,10 @@ import { createMultiplayerSystem } from './network/multiplayer.js?v=202605070200
 import { createUfoEventController } from './world/ufoEvents.js?v=202605070200';
 import { createEngineAudioSystem } from './audio/engineAudio.js?v=202605061100';
 import {
+  augmentFloatingObjectGlobalReport,
+  runFloatingObjectGlobalIntegrity
+} from './world/floatingObjectIntegrity.js?v=202605240100';
+import {
   DEFAULT_RENDER_QUALITY,
   RENDER_QUALITY_PRESETS,
   applyUltraSceneQuality,
@@ -235,6 +239,12 @@ const state = {
   throttle: 0.34,
   reverse: 0,
   parkingBrake: false,
+  parkingBrakePressure: 0,
+  isParked: false,
+  preventGroundMovement: false,
+  parkBrakeWarning: false,
+  parkBrakeWarningText: '',
+  parkBrakeStatusText: '',
   verticalSpeed: 0,
   grounded: true,
   lawMode: 'NORMAL_LAW',
@@ -280,6 +290,10 @@ if (startMode === 'parked') {
   state.throttle = 0;
   state.reverse = 0;
   state.parkingBrake = true;
+  state.parkingBrakePressure = 1;
+  state.isParked = true;
+  state.preventGroundMovement = true;
+  state.parkBrakeStatusText = 'PARKED';
 } else if (startMode === 'air' || startMode === 'cruise') {
   const x = AIRPORTS[0].x;
   const z = AIRPORTS[0].z - 720;
@@ -296,6 +310,9 @@ if (startMode === 'parked') {
   state.pitch = startMode === 'cruise' ? 0 : altitudeMeters > 650 ? -0.025 : -0.05;
   state.grounded = false;
   state.parkingBrake = false;
+  state.parkingBrakePressure = 0;
+  state.isParked = false;
+  state.preventGroundMovement = false;
 }
 
 state.physicsSpeedMS = Math.abs(state.speed);
@@ -421,7 +438,6 @@ function startWorldBuildQueue() {
       dayNightCycle.update(0);
     }),
     () => groundWorld.createCity(),
-    () => groundWorld.createForests(),
     () => cloudSystem.createClouds(),
     () => birdSystem.createBirds(),
     ...(denseScenery ? [
@@ -437,9 +453,12 @@ function startWorldBuildQueue() {
     () => groundWorld.createAirfieldLowHomes(),
     () => groundWorld.createRunwayEndScatterHomes(),
     () => groundWorld.createFarmlandRegions(),
+    () => groundWorld.createForests(),
     () => groundWorld.createGroundDetails(),
     () => groundWorld.createLowGrassMeadows()
-  ] : [];
+  ] : [
+    () => groundWorld.createForests()
+  ];
   const tasks = [...criticalTasks, ...backgroundTasks];
   let taskIndex = 0;
   let criticalResolved = false;
@@ -522,7 +541,13 @@ function toggleParkingBrake() {
     return;
   }
   state.parkingBrake = !state.parkingBrake;
-  if (state.parkingBrake) throttleSystem.setDetent('IDLE');
+  state.parkingBrakePressure = state.parkingBrake ? 1 : 0;
+  state.isParked = false;
+  state.preventGroundMovement = false;
+  state.parkBrakeWarning = false;
+  state.parkBrakeWarningText = '';
+  state.parkBrakeStatusText = state.parkingBrake ? 'PARK BRK' : '';
+  state.audioCue = state.parkingBrake ? 'parking_brake_set' : 'parking_brake_release';
   hud.updateHud();
 }
 
@@ -953,6 +978,7 @@ function currentTargetAirport() {
 }
 
 function runWorldIntegrityReports(label = 'manual') {
+  const floatingGlobalReport = runFloatingObjectGlobalIntegrity({ scene, terrainHeight, label });
   const groundReport = summarizeGroundPlacement(scene);
   const urbanInfrastructureReport = groundWorld.createUrbanInfrastructureReport?.() || null;
   const roadNetworkReport = roadSystem.createRoadIntegrityReport?.() || null;
@@ -967,6 +993,12 @@ function runWorldIntegrityReports(label = 'manual') {
   const apronLightingReport = airportSystem.createAirportApronLightingReport?.();
   const obstacleReport = airportSystem.createAirportObstacleReport?.();
   const hiddenIslandAirportReport = airportSystem.createHiddenIslandAirportReport?.();
+  augmentFloatingObjectGlobalReport(floatingGlobalReport, {
+    groundReport,
+    urbanInfrastructureReport,
+    roadNetworkReport,
+    hiddenIslandAirportReport
+  });
   window.MHFS_GROUND_PLACEMENT_REPORT = groundReport;
   window.MHFS_URBAN_INFRASTRUCTURE_REPORT = urbanInfrastructureReport;
   window.MHFS_WINDOW_LIGHT_DAY_NIGHT_REPORT = windowLightDayNightReport;
@@ -974,7 +1006,9 @@ function runWorldIntegrityReports(label = 'manual') {
   window.MHFS_AIRPORT_APRON_LIGHTING_REPORT = apronLightingReport;
   window.MHFS_AIRPORT_OBSTACLE_REPORT = obstacleReport;
   window.MHFS_HIDDEN_ISLAND_AIRPORT_REPORT = hiddenIslandAirportReport;
+  window.MHFS_FLOATING_OBJECT_GLOBAL_REPORT = floatingGlobalReport;
   if (enableConsoleDiagnostics || label === 'startup' || label === 'airport-priority-load') {
+    console.info(floatingGlobalReport.text);
     console.info('Ground Placement Report:', {
       BuildingsChecked: groundReport.buildingsChecked,
       FloatingBuildingsFixed: groundReport.floatingBuildingsFixed,
@@ -998,7 +1032,7 @@ function runWorldIntegrityReports(label = 'manual') {
     console.info('Airport Obstacle Report:', obstacleReport);
     console.info('Hidden Island Airport Report:', hiddenIslandAirportReport);
   }
-  return { groundReport, urbanInfrastructureReport, windowLightDayNightReport, nightReport, apronLightingReport, obstacleReport, hiddenIslandAirportReport };
+  return { floatingGlobalReport, groundReport, urbanInfrastructureReport, windowLightDayNightReport, nightReport, apronLightingReport, obstacleReport, hiddenIslandAirportReport };
 }
 
 function mergeRoadIntegrityReports(cityReport = {}, networkReport = {}) {
@@ -1211,7 +1245,7 @@ function updateSpeedFeeling(dt) {
   const acceleration = state.longitudinalAccelerationMS2 || 0;
   const speedTrendKts = acceleration * 10 * KT_PER_MPS;
   const onGround = state.grounded === true;
-  const wheelSpeedKts = onGround ? iasKts : 0;
+  const wheelSpeedKts = onGround && !state.preventGroundMovement ? iasKts : 0;
   const groundRumbleFactor = onGround ? smoothstep(30, 145, wheelSpeedKts) : 0;
   const brakeFeedbackFactor = onGround ? THREE.MathUtils.clamp(state.totalBrakePressure || 0, 0, 1) * smoothstep(8, 120, wheelSpeedKts) : 0;
   const reverseFeedbackFactor = onGround ? THREE.MathUtils.clamp(Math.max(state.reverse || 0, state.reverseEffect || 0), 0, 1) * smoothstep(18, 120, wheelSpeedKts) : 0;
@@ -1314,8 +1348,8 @@ function updateAudioFeedback(deltaTime) {
     playCue(state.audioCue);
     state.audioCue = '';
   }
-  const warning = state.flightWarning || state.fmaThrustMode || '';
-  if (warning && warning !== lastAudioWarning && ['LOW ENERGY', 'OVERSPEED', 'STALL', 'A.FLOOR', 'RETARD', 'REV LOCKED', 'LVR ASYM', 'FLAP OVERSPEED', 'TOO FAST FOR FLAPS'].includes(warning)) {
+  const warning = state.flightWarning || state.parkBrakeWarningText || state.fmaThrustMode || '';
+  if (warning && warning !== lastAudioWarning && ['LOW ENERGY', 'OVERSPEED', 'STALL', 'A.FLOOR', 'RETARD', 'REV LOCKED', 'LVR ASYM', 'FLAP OVERSPEED', 'TOO FAST FOR FLAPS', 'PARK BRK ON', 'RELEASE PARKING BRAKE'].includes(warning)) {
     playCue(warning);
   }
   lastAudioWarning = warning;

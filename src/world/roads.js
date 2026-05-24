@@ -46,7 +46,8 @@ export function createRoadSystem({ scene, terrainHeight, waterBands }) {
     group.userData.riverRoadBridge = true;
     group.userData.regionalBridge = true;
     group.userData.deckLength = bridge.length;
-    group.userData.rampLength = Math.max(150, bridge.width * 2.45);
+    const rampLength = bridgeRampLengthForTerrain(placement, bridge, deckY + 4.08);
+    group.userData.rampLength = rampLength;
     scene.add(group);
 
     createBridgeUnderflow(bridge, underBridgeWaterMaterial, placement);
@@ -60,7 +61,7 @@ export function createRoadSystem({ scene, terrainHeight, waterBands }) {
     surface.position.y = 4.08;
     surface.receiveShadow = true;
     group.add(surface);
-    const rampsValid = createBridgeApproaches(group, placement, bridge, roadMaterial, railMaterial, stripeMaterial, 4.08);
+    const rampsValid = createBridgeApproaches(group, placement, bridge, roadMaterial, railMaterial, stripeMaterial, 4.08, rampLength);
 
     for (const side of [-1, 1]) {
       const rail = new THREE.Mesh(new THREE.BoxGeometry(4.2, 9.5, bridge.length + 26), railMaterial);
@@ -114,7 +115,7 @@ export function createRoadSystem({ scene, terrainHeight, waterBands }) {
       group.add(stripe);
     }
 
-    recordBridge(bridgeType, rampsValid, deckY, bridge.clearance || 24, bridge);
+    recordBridge(bridgeType, rampsValid, deckY, bridge.clearance || 24, bridge, placement);
   }
 
   function createRoadSegment(road, roadMaterial, stripeMaterial) {
@@ -156,8 +157,8 @@ export function createRoadSystem({ scene, terrainHeight, waterBands }) {
     }
   }
 
-  function createBridgeApproaches(group, placement, bridge, roadMaterial, railMaterial, stripeMaterial, deckY) {
-    const rampLength = Math.max(150, bridge.width * 2.45);
+  function createBridgeApproaches(group, placement, bridge, roadMaterial, railMaterial, stripeMaterial, deckY, rampLengthOverride = null) {
+    const rampLength = rampLengthOverride ?? Math.max(150, bridge.width * 2.45);
     const roadWidth = bridge.width - 12;
     let rampsValid = true;
   
@@ -169,7 +170,7 @@ export function createRoadSystem({ scene, terrainHeight, waterBands }) {
       const centerZ = end * (bridge.length / 2 + rampLength / 2 + 31);
       const centerY = (deckY + groundY) / 2;
       const slope = Math.atan2(deckY - groundY, rampLength);
-      if (Math.abs(deckY - groundY) / Math.max(1, rampLength) > 0.18) rampsValid = false;
+      if (Math.abs(deckY - groundY) / Math.max(1, rampLength) > 0.22) rampsValid = false;
   
       const ramp = new THREE.Mesh(new THREE.BoxGeometry(roadWidth, 0.58, rampLength + 48), roadMaterial);
       ramp.position.set(0, centerY, centerZ);
@@ -203,13 +204,33 @@ export function createRoadSystem({ scene, terrainHeight, waterBands }) {
     return rampsValid;
   }
 
+  function bridgeRampLengthForTerrain(placement, bridge, deckSurfaceWorldY) {
+    const baseRampLength = Math.max(150, bridge.width * 2.45);
+    const candidates = [baseRampLength, 220, 320, 500, 800, 1100].filter((value, index, list) => value >= baseRampLength && list.indexOf(value) === index);
+    for (const rampLength of candidates) {
+      if (bridgeRampMaxSlope(placement, bridge, deckSurfaceWorldY, rampLength) <= 0.22) return rampLength;
+    }
+    return candidates[candidates.length - 1] || baseRampLength;
+  }
+
+  function bridgeRampMaxSlope(placement, bridge, deckSurfaceWorldY, rampLength) {
+    let maxSlope = 0;
+    for (const end of [-1, 1]) {
+      const farZ = end * (bridge.length / 2 + rampLength + 54);
+      const farWorld = bridgeLocalToWorld(placement, 0, farZ);
+      const groundY = terrainHeight(farWorld.x, farWorld.z) + 1.05;
+      maxSlope = Math.max(maxSlope, Math.abs(deckSurfaceWorldY - groundY) / Math.max(1, rampLength));
+    }
+    return maxSlope;
+  }
+
   function bridgeTypeForProfile(bridge) {
     if ((bridge.length || 0) >= 620 || (bridge.width || 0) >= 70) return 'large';
     if ((bridge.length || 0) >= 500 || (bridge.width || 0) >= 58) return 'medium';
     return 'small';
   }
 
-  function recordBridge(type, rampsValid, deckY, clearance, bridge) {
+  function recordBridge(type, rampsValid, deckY, clearance, bridge, placement) {
     const report = roadIntegrityReport.bridgeReport;
     report.totalBridgesAdded++;
     if (type === 'large') report.largeBridgesCount++;
@@ -217,8 +238,13 @@ export function createRoadSystem({ scene, terrainHeight, waterBands }) {
     else report.smallBridgesCount++;
     if (rampsValid) report.bridgesWithValidRamps++;
     else report.bridgesFixedCount++;
-    if (deckY < WATER_LEVEL + Math.max(10, clearance * 0.55) || deckY > terrainHeight(bridge.x, bridge.z) + 38) report.floatingBridgeCount++;
-    if (isInAirportExclusionZone(bridge.x, bridge.z, Math.max(36, (bridge.width || 50) * 0.45), { approach: false, runwaySafety: false, pavement: true })) {
+    const localTerrainY = terrainHeight(placement.x, placement.z);
+    const lowlandBridge = localTerrainY < WATER_LEVEL + 28;
+    if (
+      (lowlandBridge && (deckY < WATER_LEVEL + Math.max(10, clearance * 0.55) || deckY > WATER_LEVEL + 92)) ||
+      (!lowlandBridge && (deckY - localTerrainY < 4 || deckY - localTerrainY > 42))
+    ) report.floatingBridgeCount++;
+    if (isInAirportExclusionZone(placement.x, placement.z, Math.max(36, (bridge.width || 50) * 0.45), { approach: false, runwaySafety: false, pavement: true })) {
       report.bridgesOverlappingAirportZones++;
     }
   }
@@ -379,6 +405,11 @@ export function createRoadSystem({ scene, terrainHeight, waterBands }) {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.receiveShadow = true;
     mesh.renderOrder = renderOrder;
+    mesh.userData.terrainConformingPatch = true;
+    mesh.userData.roadSurface = true;
+    mesh.userData.groundOffset = lift;
+    mesh.userData.diagnosticType = 'road';
+    mesh.userData.diagnosticCount = 1;
     scene.add(mesh);
     return mesh;
   }
