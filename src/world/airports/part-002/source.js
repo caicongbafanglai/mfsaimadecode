@@ -156,6 +156,7 @@
       glowRoot.name = `${saucer.name}-glowRoot`;
       modelRoot.userData.ufoModelRoot = true;
       glowRoot.userData.ufoGlowRoot = true;
+      glowRoot.renderOrder = 72;
       saucer.position.set(x, saucerGroundY, z);
       saucer.rotation.y = yaw;
       saucer.userData.airportFacility = true;
@@ -298,6 +299,7 @@
       cockpitSideGlow.userData.hiddenUfoGlow = true;
       glowRoot.add(cockpitSideGlow);
       saucer.userData.hiddenUfoGlowMeshes.push(cockpitSideGlow);
+      stabilizeHiddenUfoGlowLayers(glowRoot);
 
       for (let panel = 0; panel < 24; panel++) {
         const angle = panel * Math.PI * 2 / 24;
@@ -571,6 +573,22 @@
         night
       );
     }
+  }
+
+  function stabilizeHiddenUfoGlowLayers(root) {
+    root.traverse(object => {
+      if (!object.isMesh) return;
+      object.renderOrder = 72;
+      const material = object.material;
+      if (!material) return;
+      const materials = Array.isArray(material) ? material : [material];
+      for (const item of materials) {
+        item.depthWrite = false;
+        item.depthTest = true;
+        item.transparent = true;
+        item.needsUpdate = true;
+      }
+    });
   }
 
   function setHiddenUfoGlowMeshes(glowMeshes, intensity) {

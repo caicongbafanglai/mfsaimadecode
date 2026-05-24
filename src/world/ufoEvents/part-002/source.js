@@ -34,8 +34,8 @@
     };
   }
 
-  function hideInactive(nowMs) {
-    const keepLost = performance.now() < lostUntilMs && state.ufoContact?.lost;
+  function hideInactive(localNowMs = performance.now()) {
+    const keepLost = localNowMs < lostUntilMs && state.ufoContact?.lost;
     model.state = keepLost ? UFO_EVENT_STATES.WORLD_LOST : UFO_EVENT_STATES.HIDDEN;
     model.eventId = '';
     model.isAirborne = false;

@@ -354,7 +354,7 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
     if (options.minVisibleDistance) {
       object.userData.stableLod = {
         distance: options.minVisibleDistance,
-        hysteresis: 0.34,
+        hysteresis: 0.42,
         fadeSeconds: 0
       };
     }

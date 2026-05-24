@@ -45,10 +45,10 @@ const CITY_ROAD_PRIMARY_WIDTH = 38;
 const CITY_ROAD_SECONDARY_WIDTH = 24;
 const STREETLIGHT_HEIGHT = 11.5;
 const STREETLIGHT_EDGE_OFFSET = 7.5;
-const CITY_WINDOW_NEAR_FADE_START = 2600;
-const CITY_WINDOW_NEAR_FADE_END = 6200;
-const CITY_WINDOW_FAR_FADE_START = 2200;
-const CITY_WINDOW_FAR_FADE_END = 6200;
+const CITY_WINDOW_NEAR_FADE_START = 3200;
+const CITY_WINDOW_NEAR_FADE_END = 5600;
+const CITY_WINDOW_FAR_FADE_START = 4200;
+const CITY_WINDOW_FAR_FADE_END = 6800;
 const CITY_FAR_WINDOW_DOT_STRIDE = 2;
 const CITY_BRIDGE_DECK_SURFACE_Y = 3.08;
 const CITY_BRIDGE_EDGE_HEIGHT = 2.8;
@@ -165,6 +165,7 @@ export function createGroundWorld({ scene, trafficCars, terrainHeight, mulberry3
   streetlightLampMaterial.userData.nightOpacity = 0.92;
   for (const material of [warmWindowMaterial, coolWindowMaterial, warmWindowGlowMaterial, coolWindowGlowMaterial, streetlightLampMaterial]) {
     material.blending = THREE.AdditiveBlending;
+    material.depthTest = true;
     material.toneMapped = false;
   }
 

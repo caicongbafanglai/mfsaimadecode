@@ -299,19 +299,22 @@
     mouthWaterMaterial.roughness = 0.14;
     mouthWaterMaterial.metalness = 0.16;
     const wetSandMaterial = liftSurfaceMaterial(new THREE.MeshStandardMaterial({
-      color: 0xded79f,
+      color: NATURAL_WET_SAND_COLOR,
       roughness: 0.9,
       metalness: 0.02,
       transparent: true,
-      opacity: 0.44,
-      depthWrite: false
-    }), -3, -3);
+      opacity: 0.28,
+      depthWrite: false,
+      depthTest: true
+    }), -34, -34);
     const foamMaterial = liftSurfaceMaterial(new THREE.MeshBasicMaterial({
       color: 0xd8fbff,
       transparent: true,
-      opacity: 0.16,
-      depthWrite: false
-    }), -8, -8);
+      opacity: 0.1,
+      depthWrite: false,
+      depthTest: true,
+      toneMapped: false
+    }), -36, -36);
   
     for (const river of RIVER_SYSTEMS) {
       if (river.length < 2) continue;
@@ -350,6 +353,7 @@
         sandbar.scale.set(length * 0.34, width * 0.13, 1);
         sandbar.receiveShadow = true;
         sandbar.renderOrder = 1;
+        sandbar.userData.naturalRiverMouthSediment = true;
         group.add(sandbar);
       }
   
@@ -358,6 +362,7 @@
       channel.position.set(length * 0.04, RIVER_SURFACE_Y - RIVER_SHORE_Y + 0.12, 0);
       channel.scale.set(length * 0.72, width * 0.43, 1);
       channel.renderOrder = 2;
+      channel.userData.waterSurfaceType = 'river-mouth';
       group.add(channel);
   
       for (let i = 0; i < 9; i++) {
@@ -369,6 +374,7 @@
         );
         band.rotation.y = (rng() - 0.5) * 0.2;
         band.renderOrder = 4;
+        band.userData.waterOverlay = true;
         group.add(band);
         waterBands.push({
           mesh: band,
@@ -401,6 +407,7 @@
         sediment.scale.set(length * 0.42, 86, 1);
         sediment.receiveShadow = true;
         sediment.renderOrder = 1;
+        sediment.userData.naturalRiverMouthSediment = true;
         scene.add(sediment);
       }
 
@@ -410,6 +417,7 @@
       water.position.set(center.x, RIVER_SURFACE_Y + 0.14, center.z);
       water.scale.set(length * 0.68 + 120, 118, 1);
       water.renderOrder = 5;
+      water.userData.waterSurfaceType = 'edge-river-mouth';
       scene.add(water);
     }
   }

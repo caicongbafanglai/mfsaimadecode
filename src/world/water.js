@@ -30,6 +30,17 @@ import {
 
 let glossFalloffTexture = null;
 
+const NATURAL_SHORE_COLOR = 0xb9ad8f;
+const NATURAL_WET_SAND_COLOR = 0xb7aa8a;
+const WATER_RENDER_ORDER = Object.freeze({
+  ocean: -4,
+  sheen: -3,
+  shore: 1,
+  surface: 2,
+  gloss: 3,
+  overlay: 4
+});
+
 export function isRiverGeometryHiddenByWater(x, z, riverDistance = null) {
   if (closestLakeNormalized(x, z) < 0.94) return true;
   if (isRiverMouthClearancePoint(x, z, 230, riverDistance)) return true;
@@ -43,7 +54,14 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
   function createWaterSystems(quality = null) {
     const denseScenery = quality?.denseScenery === true;
     const rng = mulberry32(61830);
-    const shoreMaterial = liftSurfaceMaterial(new THREE.MeshStandardMaterial({ color: 0xe8d68a, roughness: 0.9, metalness: 0.01 }), -1, -1);
+    const shoreMaterial = liftSurfaceMaterial(new THREE.MeshStandardMaterial({
+      color: NATURAL_SHORE_COLOR,
+      roughness: 0.94,
+      metalness: 0.01,
+      dithering: true,
+      depthWrite: true,
+      depthTest: true
+    }), -12, -12);
     const waterMaterial = liftSurfaceMaterial(new THREE.MeshStandardMaterial({
       color: 0x2f93bf,
       emissive: 0x0a334d,
@@ -51,8 +69,10 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
       roughness: 0.13,
       metalness: 0.24,
       dithering: true,
-      depthWrite: true
-    }), -4, -4);
+      transparent: false,
+      depthWrite: true,
+      depthTest: true
+    }), -18, -18);
     const glossMaterial = liftSurfaceMaterial(new THREE.MeshStandardMaterial({
       color: 0xb6efff,
       roughness: 0.05,
@@ -60,8 +80,9 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
       transparent: true,
       opacity: 0.075,
       alphaMap: createGlossFalloffTexture(),
-      depthWrite: false
-    }), -3, -3);
+      depthWrite: false,
+      depthTest: true
+    }), -24, -24);
   
     for (const lake of LAKES) {
       const group = new THREE.Group();
@@ -71,25 +92,27 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
   
       const shore = createOpenWaterBodyShore(lake, shoreMaterial, 0.88, 1.1, 160);
       shore.receiveShadow = true;
-      shore.renderOrder = 1;
+      shore.renderOrder = WATER_RENDER_ORDER.shore;
       group.add(shore);
   
       const water = new THREE.Mesh(new THREE.CircleGeometry(1, 128), waterMaterial.clone());
       water.rotation.x = -Math.PI / 2;
-      water.position.y = 0.08;
+      water.position.y = 0.18;
       water.scale.set(lake.rx * 0.96, lake.rz * 0.96, 1);
-      water.renderOrder = 2;
+      water.renderOrder = WATER_RENDER_ORDER.surface;
+      water.userData.waterSurfaceType = 'lake';
       group.add(water);
   
       const gloss = new THREE.Mesh(new THREE.CircleGeometry(1, 96), glossMaterial.clone());
       gloss.rotation.x = -Math.PI / 2;
-      gloss.position.set(-lake.rx * 0.16, 0.1, -lake.rz * 0.08);
+      gloss.position.set(-lake.rx * 0.16, 0.32, -lake.rz * 0.08);
       gloss.scale.set(lake.rx * 0.44, lake.rz * 0.2, 1);
-      gloss.renderOrder = 3;
+      gloss.renderOrder = WATER_RENDER_ORDER.gloss;
+      gloss.userData.waterSurfaceType = 'lake-gloss';
       group.add(gloss);
   
       if (denseScenery) {
-        const waveMaterial = new THREE.MeshBasicMaterial({ color: 0xc8f6ff, transparent: true, opacity: 0.18, depthWrite: false });
+        const waveMaterial = stableWaterOverlayMaterial(0xc8f6ff, 0.12, -30);
         for (let i = 0; i < 34; i++) {
           let lx = 0;
           let lz = 0;
@@ -102,7 +125,9 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
           const band = new THREE.Mesh(new THREE.PlaneGeometry(width, 3 + rng() * 5), waveMaterial.clone());
           band.rotation.x = -Math.PI / 2;
           band.rotation.z = (rng() - 0.5) * 0.18;
-          band.position.set(lx, 0.14, lz);
+          band.position.set(lx, 0.44, lz);
+          band.renderOrder = WATER_RENDER_ORDER.overlay;
+          band.userData.waterOverlay = true;
           group.add(band);
           waterBands.push({ mesh: band, baseX: lx, phase: rng() * Math.PI * 2, speed: 0.45 + rng() * 0.75, travel: 10 + rng() * 18 });
         }
@@ -128,41 +153,43 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
     oceanMaterial.roughness = 0.18;
     oceanMaterial.metalness = 0.28;
 
-    const ocean = new THREE.Mesh(new THREE.BoxGeometry(span, 0.14, span), oceanMaterial);
-    ocean.position.set(0, WATER_LEVEL + 0.08, 0);
+    const ocean = new THREE.Mesh(new THREE.PlaneGeometry(span, span, 1, 1), oceanMaterial);
+    ocean.rotation.x = -Math.PI / 2;
+    ocean.position.set(0, WATER_LEVEL - 0.08, 0);
     ocean.receiveShadow = false;
-    ocean.renderOrder = -2;
+    ocean.renderOrder = WATER_RENDER_ORDER.ocean;
     ocean.frustumCulled = false;
+    ocean.userData.waterSurfaceType = 'ocean';
+    ocean.userData.longRangeVisual = true;
     scene.add(ocean);
 
     const horizonMaterial = glossMaterial.clone();
     horizonMaterial.alphaMap = null;
-    horizonMaterial.opacity = 0.045;
+    horizonMaterial.opacity = 0.028;
     const horizon = new THREE.Mesh(new THREE.PlaneGeometry(span * 1.08, span * 1.08, 1, 1), horizonMaterial);
     horizon.rotation.x = -Math.PI / 2;
-    horizon.position.set(0, WATER_LEVEL + 0.19, 0);
-    horizon.renderOrder = -1;
+    horizon.position.set(0, WATER_LEVEL + 0.16, 0);
+    horizon.renderOrder = WATER_RENDER_ORDER.sheen;
     horizon.frustumCulled = false;
+    horizon.userData.waterSurfaceType = 'ocean-horizon-sheen';
+    horizon.userData.longRangeVisual = true;
     scene.add(horizon);
 
     const farSheenMaterial = glossMaterial.clone();
     farSheenMaterial.alphaMap = null;
-    farSheenMaterial.opacity = 0.035;
+    farSheenMaterial.opacity = 0.022;
     const farSheen = new THREE.Mesh(new THREE.PlaneGeometry(span * 0.76, span * 0.76, 1, 1), farSheenMaterial);
     farSheen.rotation.x = -Math.PI / 2;
-    farSheen.position.set(-span * 0.05, WATER_LEVEL + 0.24, -span * 0.04);
-    farSheen.renderOrder = 0;
+    farSheen.position.set(-span * 0.05, WATER_LEVEL + 0.22, -span * 0.04);
+    farSheen.renderOrder = WATER_RENDER_ORDER.sheen + 1;
     farSheen.frustumCulled = false;
+    farSheen.userData.waterSurfaceType = 'ocean-far-sheen';
+    farSheen.userData.longRangeVisual = true;
     scene.add(farSheen);
 
     if (!denseScenery) return;
 
-    const waveMaterial = new THREE.MeshBasicMaterial({
-      color: 0xd6fbff,
-      transparent: true,
-      opacity: 0.105,
-      depthWrite: false
-    });
+    const waveMaterial = stableWaterOverlayMaterial(0xd6fbff, 0.075, -32);
 
     const offshoreBands = [];
     for (const land of LANDMASSES) {
@@ -181,7 +208,8 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
       band.rotation.x = -Math.PI / 2;
       band.rotation.z = -item.tangent + (rng() - 0.5) * 0.18;
       band.position.set(item.point.x, WATER_LEVEL + 0.22, item.point.z);
-      band.renderOrder = 0;
+      band.renderOrder = WATER_RENDER_ORDER.overlay;
+      band.userData.waterOverlay = true;
       scene.add(band);
       waterBands.push({
         mesh: band,
@@ -204,7 +232,8 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
       const segments = land.rx > 2500 ? 256 : 128;
       const shore = createLandmassShoreRing(land, shoreMaterial, 0.94, 1.055, segments);
       shore.receiveShadow = true;
-      shore.renderOrder = 1;
+      shore.renderOrder = WATER_RENDER_ORDER.shore;
+      shore.userData.naturalCoastline = true;
       group.add(shore);
     }
   }
@@ -220,11 +249,15 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
       const mid = (a0 + a1) * 0.5;
       const midWorld = waterBodyBoundaryPoint(body, mid, 1.0);
       if (distanceToRiver(midWorld.x, midWorld.z) < 210) continue;
+      const profile = naturalShoreSegmentProfile(body, mid);
+      if (!profile.visible) continue;
 
-      const inner0 = waterBodyBoundaryLocal(body, a0, innerScale);
-      const outer0 = waterBodyBoundaryLocal(body, a0, outerScale);
-      const outer1 = waterBodyBoundaryLocal(body, a1, outerScale);
-      const inner1 = waterBodyBoundaryLocal(body, a1, innerScale);
+      const inner = innerScale + profile.innerJitter;
+      const outer = outerScale + profile.outerJitter;
+      const inner0 = waterBodyBoundaryLocal(body, a0, inner);
+      const outer0 = waterBodyBoundaryLocal(body, a0, outer);
+      const outer1 = waterBodyBoundaryLocal(body, a1, outer);
+      const inner1 = waterBodyBoundaryLocal(body, a1, inner);
       const points = [
         [inner0.x, 0, inner0.z],
         [outer0.x, 0, outer0.z],
@@ -246,7 +279,6 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
   function createEdgeOceanWater(rng, shoreMaterial, waterMaterial, glossMaterial) {
     const half = MAP_SIZE / 2;
     const oceanMaterial = waterMaterial.clone();
-    oceanMaterial.opacity = 0.86;
     const outer = EDGE_OCEAN_EXTENT;
     const middleSpan = MAP_SIZE - EDGE_OCEAN_WIDTH * 2;
     const strips = [
@@ -258,13 +290,15 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
   
     for (const strip of strips) {
       const water = new THREE.Mesh(new THREE.BoxGeometry(strip.w, 0.12, strip.d), oceanMaterial.clone());
-      water.position.set(strip.x, WATER_LEVEL + 0.12, strip.z);
+      water.position.set(strip.x, WATER_LEVEL - 0.1, strip.z);
+      water.renderOrder = WATER_RENDER_ORDER.ocean;
+      water.userData.waterSurfaceType = 'edge-ocean';
       scene.add(water);
   
       createSegmentedEdgeShore(strip, shoreMaterial);
     }
   
-    const waveMaterial = new THREE.MeshBasicMaterial({ color: 0xd6fbff, transparent: true, opacity: 0.09, depthWrite: false });
+    const waveMaterial = stableWaterOverlayMaterial(0xd6fbff, 0.07, -32);
     const visibleOffshore = Math.min(14000, EDGE_OCEAN_EXTENT * 0.24);
     for (let i = 0; i < 120; i++) {
       const vertical = rng() > 0.5;
@@ -282,6 +316,8 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
         band.rotation.z = (rng() - 0.5) * 0.16;
         band.position.set((rng() - 0.5) * (MAP_SIZE + visibleOffshore * 1.4), WATER_LEVEL + 0.18, edgeSign * (half - EDGE_OCEAN_WIDTH + offshore));
       }
+      band.renderOrder = WATER_RENDER_ORDER.overlay;
+      band.userData.waterOverlay = true;
       scene.add(band);
       waterBands.push({ mesh: band, baseX: band.position.x, phase: rng() * Math.PI * 2, speed: 0.24 + rng() * 0.42, travel: 8 + rng() * 18, worldAxis: true });
     }
@@ -290,31 +326,33 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
   function createBayWater(rng, shoreMaterial, waterMaterial, glossMaterial, denseScenery = true) {
     for (const bay of BAYS) {
       const group = new THREE.Group();
-      group.position.set(bay.x, bay.level, bay.z);
+      group.position.set(bay.x, Math.max(bay.level, WATER_LEVEL + 0.06), bay.z);
       group.rotation.y = bay.rotation;
       scene.add(group);
   
       const shore = createOpenWaterBodyShore(bay, shoreMaterial, 0.91, 1.05, 192);
       shore.receiveShadow = true;
-      shore.renderOrder = 1;
+      shore.renderOrder = WATER_RENDER_ORDER.shore;
       group.add(shore);
   
       const water = new THREE.Mesh(new THREE.CircleGeometry(1, 160), waterMaterial.clone());
       water.rotation.x = -Math.PI / 2;
-      water.position.y = 0.08;
+      water.position.y = 0.18;
       water.scale.set(bay.rx * 0.98, bay.rz * 0.98, 1);
-      water.renderOrder = 2;
+      water.renderOrder = WATER_RENDER_ORDER.surface;
+      water.userData.waterSurfaceType = 'bay';
       group.add(water);
   
       const gloss = new THREE.Mesh(new THREE.CircleGeometry(1, 96), glossMaterial.clone());
       gloss.rotation.x = -Math.PI / 2;
-      gloss.position.set(-bay.rx * 0.18, 0.12, -bay.rz * 0.12);
+      gloss.position.set(-bay.rx * 0.18, 0.34, -bay.rz * 0.12);
       gloss.scale.set(bay.rx * 0.48, bay.rz * 0.18, 1);
-      gloss.renderOrder = 3;
+      gloss.renderOrder = WATER_RENDER_ORDER.gloss;
+      gloss.userData.waterSurfaceType = 'bay-gloss';
       group.add(gloss);
   
       if (denseScenery) {
-        const waveMaterial = new THREE.MeshBasicMaterial({ color: 0xc8f6ff, transparent: true, opacity: 0.14, depthWrite: false });
+        const waveMaterial = stableWaterOverlayMaterial(0xc8f6ff, 0.1, -30);
         for (let i = 0; i < 56; i++) {
           let lx = 0;
           let lz = 0;
@@ -326,7 +364,9 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
           const band = new THREE.Mesh(new THREE.PlaneGeometry(90 + rng() * 190, 3 + rng() * 5), waveMaterial.clone());
           band.rotation.x = -Math.PI / 2;
           band.rotation.z = (rng() - 0.5) * 0.22;
-          band.position.set(lx, 0.16, lz);
+          band.position.set(lx, 0.46, lz);
+          band.renderOrder = WATER_RENDER_ORDER.overlay;
+          band.userData.waterOverlay = true;
           group.add(band);
           waterBands.push({ mesh: band, baseX: lx, phase: rng() * Math.PI * 2, speed: 0.32 + rng() * 0.55, travel: 12 + rng() * 24 });
         }
@@ -343,7 +383,8 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
 
       const shore = createOpenWaterBodyShore(island, shoreMaterial, 0.88, 1.12, 224);
       shore.receiveShadow = true;
-      shore.renderOrder = 1;
+      shore.renderOrder = WATER_RENDER_ORDER.shore;
+      shore.userData.naturalCoastline = true;
       group.add(shore);
     }
   }
@@ -369,7 +410,7 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
       );
       shore.position.set(x, WATER_LEVEL + 0.08, z);
       shore.receiveShadow = true;
-      shore.renderOrder = 1;
+      shore.renderOrder = WATER_RENDER_ORDER.shore;
       scene.add(shore);
     }
   }
@@ -385,11 +426,15 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
       const mid = (a0 + a1) * 0.5;
       const midWorld = waterBodyBoundaryPoint(body, mid, (innerScale + outerScale) * 0.5);
       if (isOpenWaterBodyShoreGap(midWorld.x, midWorld.z)) continue;
+      const profile = naturalShoreSegmentProfile(body, mid, true);
+      if (!profile.visible) continue;
   
-      const inner0 = waterBodyBoundaryLocal(body, a0, innerScale);
-      const outer0 = waterBodyBoundaryLocal(body, a0, outerScale);
-      const outer1 = waterBodyBoundaryLocal(body, a1, outerScale);
-      const inner1 = waterBodyBoundaryLocal(body, a1, innerScale);
+      const inner = innerScale + profile.innerJitter * 0.56;
+      const outer = outerScale + profile.outerJitter * 0.56;
+      const inner0 = waterBodyBoundaryLocal(body, a0, inner);
+      const outer0 = waterBodyBoundaryLocal(body, a0, outer);
+      const outer1 = waterBodyBoundaryLocal(body, a1, outer);
+      const inner1 = waterBodyBoundaryLocal(body, a1, inner);
       const points = [
         [inner0.x, 0, inner0.z],
         [outer0.x, 0, outer0.z],
@@ -405,7 +450,37 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setIndex(indices);
     geometry.computeVertexNormals();
-    return new THREE.Mesh(geometry, material);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.userData.naturalWaterShore = true;
+    return mesh;
+  }
+
+  function naturalShoreSegmentProfile(body, angle, waterBody = false) {
+    const seed = body.shoreSeed || 0;
+    const n =
+      Math.sin(angle * 2.7 + seed * 1.3) * 0.42 +
+      Math.sin(angle * 5.9 + seed * 2.1) * 0.34 +
+      Math.sin(angle * 11.3 + seed * 0.7) * 0.24;
+    const isIsland = ISLANDS.includes(body);
+    const minVisible = waterBody ? -0.86 : isIsland ? -0.34 : -0.44;
+    const visible = n > minVisible || (body.houses || 0) > 60 && n > -0.62;
+    const widthNoise = Math.sin(angle * 8.1 + seed * 3.7) * 0.5 + 0.5;
+    return {
+      visible,
+      innerJitter: -0.012 * widthNoise,
+      outerJitter: 0.01 + 0.018 * widthNoise
+    };
+  }
+
+  function stableWaterOverlayMaterial(color, opacity, polygonOffsetUnits) {
+    return liftSurfaceMaterial(new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity,
+      depthWrite: false,
+      depthTest: true,
+      toneMapped: false
+    }), polygonOffsetUnits, polygonOffsetUnits);
   }
 
   function isEdgeShoreOpening(x, z) {
@@ -730,19 +805,22 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
     mouthWaterMaterial.roughness = 0.14;
     mouthWaterMaterial.metalness = 0.16;
     const wetSandMaterial = liftSurfaceMaterial(new THREE.MeshStandardMaterial({
-      color: 0xded79f,
+      color: NATURAL_WET_SAND_COLOR,
       roughness: 0.9,
       metalness: 0.02,
       transparent: true,
-      opacity: 0.44,
-      depthWrite: false
-    }), -3, -3);
+      opacity: 0.28,
+      depthWrite: false,
+      depthTest: true
+    }), -34, -34);
     const foamMaterial = liftSurfaceMaterial(new THREE.MeshBasicMaterial({
       color: 0xd8fbff,
       transparent: true,
-      opacity: 0.16,
-      depthWrite: false
-    }), -8, -8);
+      opacity: 0.1,
+      depthWrite: false,
+      depthTest: true,
+      toneMapped: false
+    }), -36, -36);
   
     for (const river of RIVER_SYSTEMS) {
       if (river.length < 2) continue;
@@ -781,6 +859,7 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
         sandbar.scale.set(length * 0.34, width * 0.13, 1);
         sandbar.receiveShadow = true;
         sandbar.renderOrder = 1;
+        sandbar.userData.naturalRiverMouthSediment = true;
         group.add(sandbar);
       }
   
@@ -789,6 +868,7 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
       channel.position.set(length * 0.04, RIVER_SURFACE_Y - RIVER_SHORE_Y + 0.12, 0);
       channel.scale.set(length * 0.72, width * 0.43, 1);
       channel.renderOrder = 2;
+      channel.userData.waterSurfaceType = 'river-mouth';
       group.add(channel);
   
       for (let i = 0; i < 9; i++) {
@@ -800,6 +880,7 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
         );
         band.rotation.y = (rng() - 0.5) * 0.2;
         band.renderOrder = 4;
+        band.userData.waterOverlay = true;
         group.add(band);
         waterBands.push({
           mesh: band,
@@ -832,6 +913,7 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
         sediment.scale.set(length * 0.42, 86, 1);
         sediment.receiveShadow = true;
         sediment.renderOrder = 1;
+        sediment.userData.naturalRiverMouthSediment = true;
         scene.add(sediment);
       }
 
@@ -841,6 +923,7 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
       water.position.set(center.x, RIVER_SURFACE_Y + 0.14, center.z);
       water.scale.set(length * 0.68 + 120, 118, 1);
       water.renderOrder = 5;
+      water.userData.waterSurfaceType = 'edge-river-mouth';
       scene.add(water);
     }
   }
@@ -991,7 +1074,11 @@ export function createWaterSystem({ scene, waterBands, mulberry32 }) {
       } else {
         band.mesh.position.x = band.baseX + drift;
       }
-      band.mesh.material.opacity = 0.12 + Math.max(0, Math.sin(band.phase + 1.4)) * 0.14;
+      if (band.baseOpacity === undefined) band.baseOpacity = band.mesh.material?.opacity ?? 0.1;
+      if (band.mesh.material && Math.abs((band.mesh.material.opacity ?? 0) - band.baseOpacity) > 0.0001) {
+        band.mesh.material.opacity = band.baseOpacity;
+        band.mesh.material.needsUpdate = true;
+      }
     }
   }
 

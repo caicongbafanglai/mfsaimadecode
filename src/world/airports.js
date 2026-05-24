@@ -355,7 +355,7 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
     if (options.minVisibleDistance) {
       object.userData.stableLod = {
         distance: options.minVisibleDistance,
-        hysteresis: 0.34,
+        hysteresis: 0.42,
         fadeSeconds: 0
       };
     }
@@ -806,6 +806,7 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
       glowRoot.name = `${saucer.name}-glowRoot`;
       modelRoot.userData.ufoModelRoot = true;
       glowRoot.userData.ufoGlowRoot = true;
+      glowRoot.renderOrder = 72;
       saucer.position.set(x, saucerGroundY, z);
       saucer.rotation.y = yaw;
       saucer.userData.airportFacility = true;
@@ -948,6 +949,7 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
       cockpitSideGlow.userData.hiddenUfoGlow = true;
       glowRoot.add(cockpitSideGlow);
       saucer.userData.hiddenUfoGlowMeshes.push(cockpitSideGlow);
+      stabilizeHiddenUfoGlowLayers(glowRoot);
 
       for (let panel = 0; panel < 24; panel++) {
         const angle = panel * Math.PI * 2 / 24;
@@ -1221,6 +1223,22 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
         night
       );
     }
+  }
+
+  function stabilizeHiddenUfoGlowLayers(root) {
+    root.traverse(object => {
+      if (!object.isMesh) return;
+      object.renderOrder = 72;
+      const material = object.material;
+      if (!material) return;
+      const materials = Array.isArray(material) ? material : [material];
+      for (const item of materials) {
+        item.depthWrite = false;
+        item.depthTest = true;
+        item.transparent = true;
+        item.needsUpdate = true;
+      }
+    });
   }
 
   function setHiddenUfoGlowMeshes(glowMeshes, intensity) {
@@ -2058,7 +2076,7 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
       mesh.setMatrixAt(i, dummy.matrix);
     }
     mesh.name = name;
-    mesh.renderOrder = 39;
+    mesh.renderOrder = airportLightRenderOrder(mesh.userData?.airportLightLayer || fixtureLayerForName(name));
     mesh.frustumCulled = false;
     mesh.userData.longRangeVisual = true;
     mesh.userData.nightGlow = true;
@@ -2133,6 +2151,7 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
       opacity: dayOpacity,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
+      depthTest: true,
       toneMapped: false
     });
     material.userData.baseOpacity = dayOpacity;
@@ -2152,6 +2171,7 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
     const materials = !object.material ? [] : Array.isArray(object.material) ? object.material : [object.material];
     for (const material of materials) {
       material.opacity = 0;
+      material.depthTest = true;
       material.userData.baseOpacity = 0;
       material.userData.nightOnlyVisual = true;
     }
@@ -2179,6 +2199,16 @@ export function createAirportSystem({ scene, terrainHeight, getRenderQuality = (
     if (layer === 'runway' || layer === 'approach') return 1;
     if (layer === 'taxi' || layer === 'apron' || layer === 'building') return 2;
     return 3;
+  }
+
+  function airportLightRenderOrder(layer) {
+    if (layer === 'runway') return 44;
+    if (layer === 'approach') return 45;
+    if (layer === 'taxi') return 46;
+    if (layer === 'apron') return 47;
+    if (layer === 'building') return 48;
+    if (layer === 'road') return 49;
+    return 43;
   }
 
   function pushRgb(colors, color, intensity) {

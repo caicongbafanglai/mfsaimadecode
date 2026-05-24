@@ -284,7 +284,7 @@ export function createHud({ ui, state, rootStyle, terrainHeight, airportWorld })
       }
     };
 
-    for (const land of LANDMASSES) drawWaterBody(land, '#3f7546', '#e4c35f');
+    for (const land of LANDMASSES) drawWaterBody(land, '#3f7546', 'rgba(153, 181, 151, 0.58)');
     for (const bay of BAYS) drawWaterBody(bay, '#1f7b96', '#76d1e4');
     for (const lake of LAKES) drawWaterBody(lake, '#1f84a2', '#95dfef');
   

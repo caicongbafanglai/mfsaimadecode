@@ -32,7 +32,7 @@ const COMMON_SMOOTH_60HZ = Object.freeze({
   birdUpdateHz: 5,
   trafficUpdateHz: 5,
   cloudUpdateHz: 15,
-  cityLightUpdateHz: 1,
+  cityLightUpdateHz: 8,
   debugUpdateHz: 1,
   mapStreaming: true,
   antialias: true,
@@ -557,7 +557,7 @@ function createDebugHelperCleanupReport(debugHelpersEnabled) {
   const helperGeometryCount = LANDMASSES.length + LAKES.length + BAYS.length + RIVER_SYSTEMS.length * 2;
   return {
     debugHelpersEnabled: Boolean(debugHelpersEnabled),
-    yellowIslandRingsFound: LANDMASSES.length,
+    yellowIslandRingsFound: debugHelpersEnabled ? LANDMASSES.length : 0,
     yellowIslandRingsHidden: debugHelpersEnabled ? 0 : LANDMASSES.length,
     helperLinesHidden: 0,
     helperGeometriesHidden: debugHelpersEnabled ? 0 : helperGeometryCount,
@@ -686,7 +686,7 @@ function createMacroLandLayers(group, terrainHeight) {
 }
 
 function createSoftWaterReadability(group, terrainHeight) {
-  const coastBandMaterial = overlayMaterial(0xd8e0b7, 0.045, THREE.NormalBlending, -64);
+  const coastBandMaterial = overlayMaterial(0x9fb39a, 0.032, THREE.NormalBlending, -64);
   const wetlandMaterial = overlayMaterial(0x74c8bd, 0.075, THREE.NormalBlending, -66);
   const riverMouthMaterial = overlayMaterial(0x78d8ea, 0.18, THREE.AdditiveBlending, -68);
   const riverDeltaMaterial = overlayMaterial(0xcad9b8, 0.04, THREE.NormalBlending, -70);

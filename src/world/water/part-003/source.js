@@ -139,7 +139,11 @@
       } else {
         band.mesh.position.x = band.baseX + drift;
       }
-      band.mesh.material.opacity = 0.12 + Math.max(0, Math.sin(band.phase + 1.4)) * 0.14;
+      if (band.baseOpacity === undefined) band.baseOpacity = band.mesh.material?.opacity ?? 0.1;
+      if (band.mesh.material && Math.abs((band.mesh.material.opacity ?? 0) - band.baseOpacity) > 0.0001) {
+        band.mesh.material.opacity = band.baseOpacity;
+        band.mesh.material.needsUpdate = true;
+      }
     }
   }
 

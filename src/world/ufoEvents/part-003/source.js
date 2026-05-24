@@ -43,6 +43,7 @@ function createUfoModel() {
     opacity: 0.12,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
+    depthTest: true,
     toneMapped: false
   });
   const ringCoreMaterial = new THREE.MeshStandardMaterial({
@@ -53,7 +54,8 @@ function createUfoModel() {
     roughness: 0.36,
     transparent: true,
     opacity: 0.46,
-    depthWrite: false
+    depthWrite: false,
+    depthTest: true
   });
 
   const group = new THREE.Group();
@@ -220,11 +222,13 @@ function createUfoModel() {
     transparent: true,
     opacity: 0.12,
     blending: THREE.AdditiveBlending,
-    depthWrite: false
+    depthWrite: false,
+    depthTest: true
   }));
   trail.name = 'ufo-subtle-blue-departure-trail';
   trail.visible = false;
   glowRoot.add(trail);
+  stabilizeUfoGlowLayers(glowRoot);
 
   return {
     id: 'server-synchronized-ufo-event',
@@ -254,7 +258,10 @@ function createUfoModel() {
       group.visible = Boolean(value);
     },
     setGlowIntensity(value) {
-      const clamped = THREE.MathUtils.clamp(value || 0, 0, 1.85);
+      const dt = THREE.MathUtils.clamp(this.glowDt || 1 / 60, 1 / 120, 0.2);
+      const target = THREE.MathUtils.clamp(value || 0, 0, 1.85);
+      const clamped = THREE.MathUtils.damp(this.glowIntensity || 0, target, 10, dt);
+      this.glowIntensity = clamped;
       const night = THREE.MathUtils.clamp(this.nightFactor || 0, 0, 1);
       glowMaterial.opacity = THREE.MathUtils.clamp(
         (this.mode === UFO_EVENT_MODES.WORLD_ROAMING ? 0.045 : 0.065) + clamped * (night > 0.25 ? 0.5 : 0.12),
@@ -298,11 +305,27 @@ function createUfoModel() {
     updateMaterialForTime(dayNightState = {}) {
       const night = dayNightState.nightFactor ?? dayNightState.nightLightFactor ?? 0;
       this.mode = dayNightState.mode || this.mode || UFO_EVENT_MODES.WORLD_ROAMING;
-      this.glowIntensity = dayNightState.glowIntensity || 0;
+      this.glowDt = Number.isFinite(dayNightState.dt) ? dayNightState.dt : 1 / 60;
       this.setDayNightMaterial(night);
-      this.setGlowIntensity(this.glowIntensity);
+      this.setGlowIntensity(dayNightState.glowIntensity || 0);
     }
   };
+}
+
+function stabilizeUfoGlowLayers(root) {
+  root.traverse(object => {
+    if (!object.isMesh && !object.isLine) return;
+    object.renderOrder = 72;
+    const material = object.material;
+    if (!material) return;
+    const materials = Array.isArray(material) ? material : [material];
+    for (const item of materials) {
+      item.depthWrite = false;
+      item.depthTest = true;
+      item.transparent = true;
+      item.needsUpdate = true;
+    }
+  });
 }
 
 function applyUfoTransform(group, transform = {}) {

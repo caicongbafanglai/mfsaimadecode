@@ -12,7 +12,7 @@
     city.userData.diagnosticCount = 1;
     city.userData.stableLod = {
       distanceByQuality: { LOW: 18000, MEDIUM: 24000, HIGH: 31000, ULTRA: 42000 },
-      hysteresis: 0.22
+      hysteresis: 0.38
     };
     scene.add(city);
   
@@ -638,7 +638,7 @@
     points.name = 'city-far-window-light-dots';
     points.frustumCulled = false;
     points.visible = false;
-    points.renderOrder = 6;
+    points.renderOrder = 5;
     points.userData.longRangeVisual = true;
     points.userData.nightLight = true;
     points.userData.cityFarWindowLight = true;

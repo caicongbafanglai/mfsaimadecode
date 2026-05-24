@@ -98,12 +98,13 @@ export function createUfoEventController({
   function update(dt, { serverEvent = null, cycleState = null } = {}) {
     const serverTime = getServerTime?.() || null;
     const nowMs = estimatedServerNowMs(serverTime);
+    const localNowMs = performance.now();
     const debugEvent = debugPayload(nowMs);
     const payload = serverEvent || debugEvent;
     const nightFactor = cycleState?.nightLightFactor ?? serverTime?.nightLightFactor ?? 0;
 
     if (!payload) {
-      hideInactive(nowMs);
+      hideInactive(localNowMs);
       return;
     }
 
@@ -122,13 +123,13 @@ export function createUfoEventController({
     }
 
     if (payload.mode === UFO_EVENT_MODES.ISLAND_EVENT) {
-      updateIslandEvent(payload, dt, nowMs, nightFactor);
+      updateIslandEvent(payload, dt, nowMs, localNowMs, nightFactor);
     } else {
-      updateWorldEvent(payload, dt, nowMs, nightFactor);
+      updateWorldEvent(payload, dt, nowMs, localNowMs, nightFactor);
     }
   }
 
-  function updateIslandEvent(payload, dt, nowMs, nightFactor) {
+  function updateIslandEvent(payload, dt, nowMs, localNowMs, nightFactor) {
     const durations = normalizeIslandDurations(payload);
     const elapsed = Math.max(0, nowMs - payload.startTime);
     const spawn = readPoint(payload.spawnPoint, islandFallbackSpawnPoint());
@@ -239,17 +240,18 @@ export function createUfoEventController({
       headingDeg: headingFromVector(vectors.previousPosition, vectors.position),
       nightFactor,
       dt,
+      localNowMs,
       managedIslandUfo: hiddenIslandUfoManager
     });
   }
 
-  function updateWorldEvent(payload, dt, nowMs, nightFactor) {
+  function updateWorldEvent(payload, dt, nowMs, localNowMs, nightFactor) {
     const durationMs = Math.max(5000, payload.durationMs || Math.max(5000, (payload.endTime || nowMs + 18000) - payload.startTime - CONTACT_LOST_HOLD_MS));
     const elapsed = Math.max(0, nowMs - payload.startTime);
     const t = THREE.MathUtils.clamp(elapsed / durationMs, 0, 1);
     const flightType = payload.flightType || UFO_WORLD_FLIGHT_TYPES.HIGH_SPEED_PASS;
     if (payload.mode === UFO_EVENT_MODES.PLAYER_SIDE_ENCOUNTER || flightType === UFO_WORLD_FLIGHT_TYPES.PLAYER_SIDE_FOLLOW) {
-      updatePlayerSideEncounterEvent(payload, dt, nowMs, nightFactor, durationMs, elapsed);
+      updatePlayerSideEncounterEvent(payload, dt, nowMs, localNowMs, nightFactor, durationMs, elapsed);
       return;
     }
     const start = readPoint(payload.path?.startPoint || payload.startPoint, worldFallbackPoint(0));
@@ -361,11 +363,12 @@ export function createUfoEventController({
       speedKts,
       headingDeg: headingFromVector(vectors.previousPosition, vectors.position),
       nightFactor,
-      dt
+      dt,
+      localNowMs
     });
   }
 
-  function updatePlayerSideEncounterEvent(payload, dt, nowMs, nightFactor, durationMs, elapsed) {
+  function updatePlayerSideEncounterEvent(payload, dt, nowMs, localNowMs, nightFactor, durationMs, elapsed) {
     const followDurationMs = Math.max(15000, payload.followDurationMs || durationMs - 1800);
     const departureDurationMs = Math.max(1000, payload.departureDurationMs || durationMs - followDurationMs);
     const followElapsed = Math.min(elapsed, followDurationMs);
@@ -452,7 +455,8 @@ export function createUfoEventController({
       speedKts,
       headingDeg: normalizeHeading(targetHeading),
       nightFactor,
-      dt
+      dt,
+      localNowMs
     });
   }
 
@@ -500,7 +504,7 @@ export function createUfoEventController({
     };
   }
 
-  function renderEvent({ payload, phase, position, visible, coreVisible, glowIntensity, speedKts, headingDeg, nightFactor, dt, managedIslandUfo = null }) {
+  function renderEvent({ payload, phase, position, visible, coreVisible, glowIntensity, speedKts, headingDeg, nightFactor, dt, localNowMs = performance.now(), managedIslandUfo = null }) {
     preGlow.group.visible = phase === UFO_EVENT_STATES.PRE_GLOW;
     if (managedIslandUfo) {
       managedIslandUfo.updateEvent?.(payload, phase, position, glowIntensity, dt, nightFactor);
@@ -515,7 +519,7 @@ export function createUfoEventController({
       vectors.previousPosition.copy(model.group.position);
       model.setAirborneTransform?.(position);
       orientTowardPlayer(position, dt, phase);
-      updateMaterials(nightFactor, glowIntensity, payload.mode);
+      updateMaterials(nightFactor, glowIntensity, payload.mode, dt);
       updateLod(position);
       model.ringGroup.rotation.y += dt * (phase === UFO_EVENT_STATES.FAST_DEPARTURE || phase === UFO_EVENT_STATES.WORLD_DEPARTING ? 7.2 : 1.35 + glowIntensity * 1.6);
       model.edgeRing.rotation.z -= dt * 0.26;
@@ -524,8 +528,8 @@ export function createUfoEventController({
       model.trail.visible = false;
     }
 
-    const contactVisible = visible || phase === UFO_EVENT_STATES.DISAPPEAR || phase === UFO_EVENT_STATES.WORLD_LOST || performance.now() < lostUntilMs;
-    updateContact(payload, phase, position, contactVisible, speedKts, headingDeg);
+    const contactVisible = visible || phase === UFO_EVENT_STATES.DISAPPEAR || phase === UFO_EVENT_STATES.WORLD_LOST || localNowMs < lostUntilMs;
+    updateContact(payload, phase, position, contactVisible, speedKts, headingDeg, localNowMs);
     updateReport(payload, phase, visible, coreVisible, managedIslandUfo);
   }
 
@@ -546,9 +550,9 @@ export function createUfoEventController({
     model.group.rotation.set(0, currentYaw, 0, 'YXZ');
   }
 
-  function updateMaterials(nightFactor, glowIntensity, mode) {
+  function updateMaterials(nightFactor, glowIntensity, mode, dt = 1 / 60) {
     if (model.updateMaterialForTime) {
-      model.updateMaterialForTime({ nightFactor, glowIntensity, mode });
+      model.updateMaterialForTime({ nightFactor, glowIntensity, mode, dt });
       return;
     }
     const night = THREE.MathUtils.clamp(nightFactor, 0, 1);
@@ -600,8 +604,8 @@ export function createUfoEventController({
     model.trail.visible = true;
   }
 
-  function updateContact(payload, phase, position, visible, speedKts, headingDeg) {
-    const now = performance.now();
+  function updateContact(payload, phase, position, visible, speedKts, headingDeg, localNowMs = performance.now()) {
+    const now = localNowMs;
     if (visible && position) {
       lastContactPosition = { x: position.x, y: position.y, z: position.z };
     }

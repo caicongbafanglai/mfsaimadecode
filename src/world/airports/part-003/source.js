@@ -515,7 +515,7 @@
       mesh.setMatrixAt(i, dummy.matrix);
     }
     mesh.name = name;
-    mesh.renderOrder = 39;
+    mesh.renderOrder = airportLightRenderOrder(mesh.userData?.airportLightLayer || fixtureLayerForName(name));
     mesh.frustumCulled = false;
     mesh.userData.longRangeVisual = true;
     mesh.userData.nightGlow = true;
@@ -590,6 +590,7 @@
       opacity: dayOpacity,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
+      depthTest: true,
       toneMapped: false
     });
     material.userData.baseOpacity = dayOpacity;
@@ -609,6 +610,7 @@
     const materials = !object.material ? [] : Array.isArray(object.material) ? object.material : [object.material];
     for (const material of materials) {
       material.opacity = 0;
+      material.depthTest = true;
       material.userData.baseOpacity = 0;
       material.userData.nightOnlyVisual = true;
     }
@@ -636,6 +638,16 @@
     if (layer === 'runway' || layer === 'approach') return 1;
     if (layer === 'taxi' || layer === 'apron' || layer === 'building') return 2;
     return 3;
+  }
+
+  function airportLightRenderOrder(layer) {
+    if (layer === 'runway') return 44;
+    if (layer === 'approach') return 45;
+    if (layer === 'taxi') return 46;
+    if (layer === 'apron') return 47;
+    if (layer === 'building') return 48;
+    if (layer === 'road') return 49;
+    return 43;
   }
 
   function pushRgb(colors, color, intensity) {

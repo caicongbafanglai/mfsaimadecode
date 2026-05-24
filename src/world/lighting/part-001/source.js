@@ -38,6 +38,7 @@ const CYCLE_COLORS = {
 const SUN_TWILIGHT_COLOR = new THREE.Color(0xffa35d);
 const MOON_NIGHT_COLOR = new THREE.Color(0x9fb7ff);
 const NIGHT_MATERIAL_WORLD_POSITION = new THREE.Vector3();
+const CITY_LIGHT_LOD_DAMPING = 9;
 
 export function initLights(scene, quality = DEFAULT_RENDER_QUALITY) {
   const hemi = new THREE.HemisphereLight(0xdff4ff, 0x31533b, 1.9);
@@ -397,7 +398,8 @@ function cityNearWindowAlpha(object, material, camera) {
   const distance = NIGHT_MATERIAL_WORLD_POSITION.distanceTo(camera.position);
   const start = material.userData.nearFadeStart ?? 2600;
   const end = Math.max(start + 1, material.userData.nearFadeEnd ?? 6200);
-  return 1 - smoothstep(start, end, distance);
+  const target = 1 - smoothstep(start, end, distance);
+  return smoothedNightLodAlpha(object, 'cityNearWindowLodAlpha', target);
 }
 
 function cityFarWindowAlpha(object, camera) {
@@ -406,7 +408,21 @@ function cityFarWindowAlpha(object, camera) {
   const distance = NIGHT_MATERIAL_WORLD_POSITION.distanceTo(camera.position);
   const start = object.userData.farFadeStart ?? 2200;
   const end = Math.max(start + 1, object.userData.farFadeEnd ?? 6200);
-  return smoothstep(start, end, distance);
+  const target = smoothstep(start, end, distance);
+  return smoothedNightLodAlpha(object, 'cityFarWindowLodAlpha', target);
+}
+
+function smoothedNightLodAlpha(object, key, target) {
+  const now = performance.now() * 0.001;
+  const previous = object.userData[key];
+  const previousTime = object.userData[`${key}Time`] ?? now;
+  const dt = THREE.MathUtils.clamp(now - previousTime, 1 / 120, 0.25);
+  const alpha = previous === undefined
+    ? target
+    : THREE.MathUtils.damp(previous, target, CITY_LIGHT_LOD_DAMPING, dt);
+  object.userData[key] = THREE.MathUtils.clamp(alpha, 0, 1);
+  object.userData[`${key}Time`] = now;
+  return object.userData[key];
 }
 
 function blendedSkyColor(key, daylight, nightFactor, twilightFactor, target = new THREE.Color()) {
